@@ -1,0 +1,12 @@
+{
+  "service_started_at": "2025-01-04T09:00:00",
+  "last_scheduler_run": "2025-01-04T09:15:00",
+  "last_login_ok": "2025-01-04T09:00:05",
+  "last_invoice_list_run": "2025-01-04T09:15:10",
+  "last_invoice_detail_run": "2025-01-04T09:15:30",
+  "last_error": null,
+  "total_invoices_seen": 12345,
+  "total_invoices_new": 456,
+  "total_detail_success": 440,
+  "total_detail_failed": 16
+}
