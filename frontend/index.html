@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice Dashboard</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">📊</span>
+                <span class="logo-text">Invoice<span class="accent">Hub</span></span>
+            </div>
+            <nav class="nav">
+                <a href="#" class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">🏠</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-page="invoices">
+                    <span class="nav-icon">📄</span>
+                    <span>Hóa đơn</span>
+                </a>
+                <a href="#" class="nav-item" data-page="companies">
+                    <span class="nav-icon">🏢</span>
+                    <span>Công ty</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main">
+            <header class="header">
+                <h1 class="page-title" id="pageTitle">Dashboard</h1>
+                <div class="header-actions">
+                    <button class="btn btn-primary" id="syncBtn">
+                        <span>🔄</span> Đồng bộ
+                    </button>
+                </div>
+            </header>
+
+            <!-- Dashboard Page -->
+            <section class="page active" id="dashboardPage">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📄</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="totalInvoices">0</h3>
+                            <p class="stat-label">Tổng hóa đơn</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💰</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="totalAmount">0 ₫</h3>
+                            <p class="stat-label">Tổng giá trị</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🧾</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="totalTax">0 ₫</h3>
+                            <p class="stat-label">Tổng thuế</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🏢</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="totalCompanies">0</h3>
+                            <p class="stat-label">Công ty</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 class="card-title">Hóa đơn theo tháng</h3>
+                    <div class="chart-container" id="monthlyChart"></div>
+                </div>
+            </section>
+
+            <!-- Invoices Page -->
+            <section class="page" id="invoicesPage">
+                <div class="filters-bar">
+                    <input type="text" class="input" placeholder="Tìm kiếm..." id="searchInput">
+                    <input type="date" class="input" id="fromDate">
+                    <input type="date" class="input" id="toDate">
+                    <button class="btn btn-secondary" id="filterBtn">Lọc</button>
+                </div>
+
+                <div class="table-card">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Ngày</th>
+                                <th>Số HĐ</th>
+                                <th>Ký hiệu</th>
+                                <th>Người bán</th>
+                                <th>Người mua</th>
+                                <th>Giá trị</th>
+                                <th>Thuế</th>
+                            </tr>
+                        </thead>
+                        <tbody id="invoicesTable">
+                            <tr>
+                                <td colspan="7" class="empty">Đang tải...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="pagination">
+                    <button class="btn btn-icon" id="prevPage">◀</button>
+                    <span id="pageInfo">Trang 1 / 1</span>
+                    <button class="btn btn-icon" id="nextPage">▶</button>
+                </div>
+            </section>
+
+            <!-- Companies Page -->
+            <section class="page" id="companiesPage">
+                <div class="filters-bar">
+                    <button class="btn btn-primary" id="addCompanyBtn">+ Thêm công ty</button>
+                </div>
+
+                <div class="table-card">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>MST</th>
+                                <th>Tên công ty</th>
+                                <th>Username</th>
+                                <th>Trạng thái</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="companiesTable">
+                            <tr>
+                                <td colspan="5" class="empty">Đang tải...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Invoice Detail Modal -->
+    <div class="modal" id="invoiceModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Chi tiết hóa đơn</h2>
+                <button class="modal-close" id="closeModal">&times;</button>
+            </div>
+            <div class="modal-body" id="invoiceDetail">
+                <!-- Dynamic content -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Company Modal -->
+    <div class="modal" id="companyModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="companyModalTitle">Thêm công ty</h2>
+                <button class="modal-close" id="closeCompanyModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="companyForm">
+                    <div class="form-group">
+                        <label>Mã số thuế</label>
+                        <input type="text" class="input" id="companyTaxCode" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Tên công ty</label>
+                        <input type="text" class="input" id="companyName">
+                    </div>
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" class="input" id="companyUsername" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" class="input" id="companyPassword">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">Lưu</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Collector Modal -->
+    <div class="modal" id="collectorModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Thu thập hóa đơn</h2>
+                <button class="modal-close" id="closeCollectorModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Công ty</label>
+                    <input type="text" class="input" id="collectorCompanyName" readonly>
+                    <input type="hidden" id="collectorTaxCode">
+                </div>
+                <div class="form-group">
+                    <label>Từ ngày</label>
+                    <input type="date" class="input" id="collectorFromDate" required>
+                </div>
+                <div class="form-group">
+                    <label>Đến ngày</label>
+                    <input type="date" class="input" id="collectorToDate" required>
+                </div>
+                <div class="form-group" id="collectorProgress" style="display: none;">
+                    <label>Tiến độ</label>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="collectorProgressFill"></div>
+                    </div>
+                    <p id="collectorStatus" style="margin-top: 8px; color: var(--text-secondary);"></p>
+                </div>
+                <button type="button" class="btn btn-primary btn-block" id="startCollectorBtn">
+                    🚀 Bắt đầu thu thập
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+
+</html>

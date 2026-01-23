@@ -1,0 +1,12 @@
+[Unit]
+Description=Invoice Server Frontend
+After=network.target
+
+[Service]
+User=tran-ninh
+WorkingDirectory=/home/tran-ninh/OtherProjects/invoice_server/frontend
+ExecStart=/usr/bin/python3 -m http.server 5500
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

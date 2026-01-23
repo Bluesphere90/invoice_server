@@ -1,0 +1,14 @@
+# Core
+requests>=2.31.0
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.0
+schedule>=1.2.0
+
+# Web API
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# Security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4

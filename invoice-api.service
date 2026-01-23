@@ -1,0 +1,12 @@
+[Unit]
+Description=Invoice Server API
+After=network.target
+
+[Service]
+User=tran-ninh
+WorkingDirectory=/home/tran-ninh/OtherProjects/invoice_server
+ExecStart=/home/tran-ninh/OtherProjects/invoice_server/venv/bin/uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

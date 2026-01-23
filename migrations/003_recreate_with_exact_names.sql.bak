@@ -1,0 +1,221 @@
+-- Migration: Drop and recreate invoices table with EXACT API column names
+-- This preserves the original casing from the API
+
+-- First backup existing data if any
+-- DROP TABLE IF EXISTS invoices_backup;
+-- CREATE TABLE invoices_backup AS SELECT * FROM invoices;
+
+-- Drop existing table and recreate with proper column names
+DROP TABLE IF EXISTS invoice_items CASCADE;
+DROP TABLE IF EXISTS invoices CASCADE;
+
+CREATE TABLE invoices (
+    -- Primary key (from id field)
+    id TEXT PRIMARY KEY NOT NULL,
+    
+    -- Core invoice fields (from API)
+    nbmst TEXT,
+    khmshdon INTEGER,
+    khhdon TEXT,
+    shdon INTEGER,
+    tdlap TEXT,
+    nbten TEXT,
+    nmten TEXT,
+    tgtcthue DOUBLE PRECISION,
+    tgtthue DOUBLE PRECISION,
+    tthai INTEGER,
+    ttxly INTEGER,
+    
+    -- Additional fields from List API
+    cqt TEXT,
+    cttkhac TEXT,
+    dvtte TEXT,
+    hdon TEXT,
+    hsgcma TEXT,
+    hsgoc TEXT,
+    hthdon INTEGER,
+    htttoan TEXT,
+    idtbao TEXT,
+    khdon INTEGER,
+    khhdgoc TEXT,
+    khmshdgoc TEXT,
+    lhdgoc TEXT,
+    mhdon TEXT,
+    mtdiep TEXT,
+    mtdtchieu TEXT,
+    nbdchi TEXT,
+    chma TEXT,
+    chten TEXT,
+    nbhdktngay TEXT,
+    nbhdktso TEXT,
+    nbhdso TEXT,
+    nblddnbo TEXT,
+    nbptvchuyen TEXT,
+    nbstkhoan TEXT,
+    nbtnhang TEXT,
+    nbtnvchuyen TEXT,
+    nbttkhac TEXT,
+    ncma TEXT,
+    ncnhat TEXT,
+    ngcnhat TEXT,
+    nky TEXT,
+    nmdchi TEXT,
+    nmmst TEXT,
+    nmstkhoan TEXT,
+    nmtnhang TEXT,
+    nmtnmua TEXT,
+    nmttkhac TEXT,
+    ntao TEXT,
+    ntnhan TEXT,
+    pban TEXT,
+    ptgui INTEGER,
+    shdgoc INTEGER,
+    tchat INTEGER,
+    tgia DOUBLE PRECISION,
+    tgtttbchu TEXT,
+    tgtttbso DOUBLE PRECISION,
+    thdon TEXT,
+    thlap TEXT,
+    thttlphi TEXT,
+    thttltsuat TEXT,
+    tlhdon TEXT,
+    ttcktmai DOUBLE PRECISION,
+    ttkhac TEXT,
+    tttbao TEXT,
+    ttttkhac TEXT,
+    tvandnkntt TEXT,
+    mhso TEXT,
+    ladhddt TEXT,
+    mkhang TEXT,
+    nbsdthoai TEXT,
+    nbdctdtu TEXT,
+    nbfax TEXT,
+    nbwebsite TEXT,
+    nbcks TEXT,
+    nmsdthoai TEXT,
+    nmdctdtu TEXT,
+    nmcmnd TEXT,
+    nmcks TEXT,
+    bhphap TEXT,
+    hddunlap TEXT,
+    gchdgoc TEXT,
+    tbhgtngay TEXT,
+    bhpldo TEXT,
+    bhpcbo TEXT,
+    bhpngay TEXT,
+    tdlhdgoc TEXT,
+    tgtphi DOUBLE PRECISION,
+    unhiem TEXT,
+    mstdvnunlhdon TEXT,
+    tdvnunlhdon TEXT,
+    nbmdvqhnsach TEXT,
+    nbsqdinh TEXT,
+    nbncqdinh TEXT,
+    nbcqcqdinh TEXT,
+    nbhtban TEXT,
+    nmmdvqhnsach TEXT,
+    nmddvchden TEXT,
+    nmtgvchdtu TEXT,
+    nmtgvchdden TEXT,
+    nbtnban TEXT,
+    dcdvnunlhdon TEXT,
+    dksbke TEXT,
+    dknlbke TEXT,
+    thtttoan TEXT,
+    msttcgp TEXT,
+    cqtcks TEXT,
+    gchu TEXT,
+    kqcht TEXT,
+    hdntgia TEXT,
+    tgtkcthue TEXT,
+    tgtkhac TEXT,
+    nmshchieu TEXT,
+    nmnchchieu TEXT,
+    nmnhhhchieu TEXT,
+    nmqtich TEXT,
+    ktkhthue TEXT,
+    qrcode TEXT,
+    ttmstten TEXT,
+    ladhddtten TEXT,
+    hdxkhau TEXT,
+    hdxkptquan TEXT,
+    hdgktkhthue TEXT,
+    
+    -- CamelCase columns (keep exact case using double quotes)
+    "hdonLquans" TEXT,
+    "hdTrung" TEXT,
+    "isHDTrung" TEXT,
+    
+    -- New columns from Detail API
+    nmstttoan TEXT,
+    nmttttoan TEXT,
+    hdcttchinh TEXT,
+    dlhquan TEXT,
+    dlnhtmai TEXT,
+    bltphi TEXT,
+    tthdclquan TEXT,
+    pdndungs TEXT,
+    hdtbssrses TEXT,
+    
+    -- System fields
+    detail_status INTEGER DEFAULT 0,
+    detail_retry_count INTEGER DEFAULT 0,
+    last_downloaded_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes
+CREATE INDEX idx_invoices_tdlap ON invoices (tdlap);
+CREATE INDEX idx_invoices_nbmst ON invoices (nbmst);
+CREATE INDEX idx_invoices_detail_status ON invoices (detail_status, detail_retry_count);
+
+-- Invoice items table
+CREATE TABLE invoice_items (
+    id TEXT PRIMARY KEY NOT NULL,
+    idhdon TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    
+    dgia DOUBLE PRECISION,
+    dvtinh TEXT,
+    ltsuat TEXT,
+    sluong DOUBLE PRECISION,
+    stbchu TEXT,
+    stckhau DOUBLE PRECISION,
+    stt INTEGER,
+    tchat INTEGER,
+    ten TEXT,
+    thtcthue TEXT,
+    thtien DOUBLE PRECISION,
+    tlckhau TEXT,
+    tsuat DOUBLE PRECISION,
+    tthue TEXT,
+    sxep INTEGER,
+    ttkhac TEXT,
+    dvtte TEXT,
+    tgia DOUBLE PRECISION,
+    tthhdtrung TEXT,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_invoice_items_idhdon ON invoice_items (idhdon);
+
+-- Trigger to update updated_at
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_invoices_updated_at
+    BEFORE UPDATE ON invoices
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_invoice_items_updated_at
+    BEFORE UPDATE ON invoice_items
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();

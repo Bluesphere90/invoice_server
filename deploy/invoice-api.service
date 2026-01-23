@@ -1,0 +1,21 @@
+[Unit]
+Description=Invoice API Server (FastAPI)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=tran-ninh
+Group=tran-ninh
+WorkingDirectory=/home/tran-ninh/OtherProjects/invoice_server
+Environment=PYTHONPATH=/home/tran-ninh/OtherProjects/invoice_server
+ExecStart=/usr/bin/python3 -m uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=invoice-api
+
+[Install]
+WantedBy=multi-user.target
