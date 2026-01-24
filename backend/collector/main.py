@@ -30,6 +30,7 @@ def collect_for_company(
     company: dict,
     invoice_repo: InvoiceRepository,
     item_repo: InvoiceItemRepository,
+    company_repo: CompanyRepository,
     health: HealthRecorder,
     from_date: date,
     to_date: date,
@@ -58,6 +59,11 @@ def collect_for_company(
         profile = profile_service.fetch_profile()
         tax_code = profile["tax_code"]
         logger.info(f"Tax code: {tax_code}, Company: {profile['company_name']}")
+        
+        # Update company name
+        if profile.get("company_name"):
+            logger.info(f"Updating company name to {profile['company_name']}")
+            company_repo.update_company(tax_code, company_name=profile['company_name'])
         
         # Fetch invoices
         list_service = InvoiceListService(http_client, invoice_repo)
@@ -166,6 +172,7 @@ def run_collector():
                 company=company,
                 invoice_repo=invoice_repo,
                 item_repo=item_repo,
+                company_repo=company_repo,
                 health=health,
                 from_date=from_date,
                 to_date=to_date,

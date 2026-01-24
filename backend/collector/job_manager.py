@@ -140,6 +140,8 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
     """
     from backend.database import get_connection, init_database
     from backend.database.repository import InvoiceRepository
+
+    from backend.database.company_repository import CompanyRepository
     from backend.database.item_repository import InvoiceItemRepository
     from backend.collector.http import HoaDonHttpClient, LoginService, ProfileService
     from backend.collector.captcha import SvgCaptchaSolver
@@ -160,6 +162,8 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
         init_database()
         conn = get_connection()
         invoice_repo = InvoiceRepository(conn)
+
+        company_repo = CompanyRepository(conn)
         item_repo = InvoiceItemRepository(conn)
         
         # Create HTTP client and login
@@ -175,7 +179,13 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
         manager.update_job(job_id, message="Đang lấy thông tin profile...")
         profile_service = ProfileService(http_client)
         profile = profile_service.fetch_profile()
+
         tax_code = profile["tax_code"]
+        
+        # Update company name from profile
+        if profile.get("company_name"):
+            logger.info(f"Job {job_id}: Updating company name to {profile['company_name']}")
+            company_repo.update_company(tax_code, company_name=profile["company_name"])
         
         # Fetch invoice list
         manager.update_job(job_id, progress=10, message="Đang lấy danh sách hóa đơn...")

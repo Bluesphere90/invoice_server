@@ -23,8 +23,6 @@ const elements = {
 
     // Stats
     totalInvoices: document.getElementById('totalInvoices'),
-    totalAmount: document.getElementById('totalAmount'),
-    totalTax: document.getElementById('totalTax'),
     totalCompanies: document.getElementById('totalCompanies'),
     monthlyChart: document.getElementById('monthlyChart'),
 
@@ -137,8 +135,6 @@ async function loadDashboard() {
     const stats = await api('/invoices/stats');
     if (stats) {
         elements.totalInvoices.textContent = formatNumber(stats.total_invoices);
-        elements.totalAmount.textContent = formatCurrency(stats.total_amount);
-        elements.totalTax.textContent = formatCurrency(stats.total_tax);
 
         // Render chart
         renderChart(stats.invoices_by_month);
@@ -567,15 +563,19 @@ function pollCollectorStatus(jobId) {
 
         if (status.status === 'completed') {
             clearInterval(collectorPollingInterval);
-            elements.startCollectorBtn.disabled = false;
-            elements.startCollectorBtn.textContent = '✅ Hoàn thành!';
+            elements.startCollectorBtn.textContent = '✅ Hoàn thành';
             elements.startCollectorBtn.classList.remove('btn-primary');
             elements.startCollectorBtn.classList.add('btn-success');
+            elements.startCollectorBtn.disabled = false;
 
-            // Refresh dashboard stats if on dashboard
-            if (state.currentPage === 'dashboard') {
-                loadDashboard();
-            }
+            // Click to close modal
+            elements.startCollectorBtn.onclick = () => {
+                elements.collectorModal.classList.remove('active');
+                // Refresh dashboard stats if on dashboard
+                if (state.currentPage === 'dashboard') {
+                    loadDashboard();
+                }
+            };
         } else if (status.status === 'failed') {
             clearInterval(collectorPollingInterval);
             elements.startCollectorBtn.disabled = false;
@@ -594,12 +594,8 @@ function formatNumber(num) {
 }
 
 function formatCurrency(num) {
-    if (!num) return '0 ₫';
-    return new Intl.NumberFormat('vi-VN', {
-        style: 'currency',
-        currency: 'VND',
-        maximumFractionDigits: 0,
-    }).format(num);
+    if (!num) return '0';
+    return new Intl.NumberFormat('vi-VN').format(num);
 }
 
 function formatDate(dateStr) {
