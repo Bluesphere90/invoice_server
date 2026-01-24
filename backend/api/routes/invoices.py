@@ -1,7 +1,9 @@
 """Invoice API routes."""
 from typing import Optional
 from datetime import date
+import io
 from fastapi import APIRouter, Query, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 
 from backend.database import get_connection
 from backend.api.schemas import (
@@ -20,23 +22,8 @@ def get_db():
     return get_connection()
 
 
-@router.get("", response_model=InvoiceListResponse)
-async def list_invoices(
-    page: int = Query(1, ge=1, description="Page number"),
-    size: int = Query(20, ge=1, le=100, description="Page size"),
-    from_date: Optional[date] = Query(None, description="From date (YYYY-MM-DD)"),
-    to_date: Optional[date] = Query(None, description="To date (YYYY-MM-DD)"),
-    tax_code: Optional[str] = Query(None, description="Filter by seller tax code (nbmst)"),
-    buyer_tax_code: Optional[str] = Query(None, description="Filter by buyer tax code (nmmst)"),
-    search: Optional[str] = Query(None, description="Search in invoice number or company name"),
-    conn = Depends(get_db),
-):
-    """
-    List invoices with pagination and filters.
-    """
-    offset = (page - 1) * size
-    
-    # Build WHERE clause (use %s for psycopg2)
+def build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search):
+    """Build WHERE clause and params for invoice queries."""
     conditions = []
     params = []
     
@@ -61,6 +48,26 @@ async def list_invoices(
         params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
     
     where_clause = " AND ".join(conditions) if conditions else "1=1"
+    return where_clause, params
+
+
+@router.get("", response_model=InvoiceListResponse)
+async def list_invoices(
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(20, ge=1, le=100, description="Page size"),
+    from_date: Optional[date] = Query(None, description="From date (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="To date (YYYY-MM-DD)"),
+    tax_code: Optional[str] = Query(None, description="Filter by seller tax code (nbmst)"),
+    buyer_tax_code: Optional[str] = Query(None, description="Filter by buyer tax code (nmmst)"),
+    search: Optional[str] = Query(None, description="Search in invoice number or company name"),
+    conn = Depends(get_db),
+):
+    """
+    List invoices with pagination and filters.
+    """
+    offset = (page - 1) * size
+    
+    where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
     
     # Count total
     count_sql = f"SELECT COUNT(*) as count FROM invoices WHERE {where_clause}"
@@ -96,6 +103,117 @@ async def list_invoices(
         page=page,
         size=size,
         pages=pages,
+    )
+
+
+@router.get("/export")
+async def export_invoices_excel(
+    from_date: Optional[date] = Query(None, description="From date (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="To date (YYYY-MM-DD)"),
+    tax_code: Optional[str] = Query(None, description="Filter by seller tax code (nbmst)"),
+    buyer_tax_code: Optional[str] = Query(None, description="Filter by buyer tax code (nmmst)"),
+    search: Optional[str] = Query(None, description="Search in invoice number or company name"),
+    conn = Depends(get_db),
+):
+    """
+    Export invoices to Excel file.
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed")
+    
+    where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
+    
+    # Fetch all matching data (no pagination for export)
+    data_sql = f"""
+        SELECT nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon, 
+               tdlap, tgtcthue, tgtthue, tgtttbso, tthai
+        FROM invoices 
+        WHERE {where_clause}
+        ORDER BY tdlap DESC NULLS LAST, shdon DESC NULLS LAST
+    """
+    
+    with conn.cursor() as cur:
+        cur.execute(data_sql, params if params else None)
+        rows = cur.fetchall()
+    
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Hóa đơn"
+    
+    # Header style
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="6C5CE7", end_color="6C5CE7", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Headers
+    headers = [
+        "STT", "Ngày lập", "Số HĐ", "Ký hiệu", "Mẫu số",
+        "MST Người bán", "Tên Người bán",
+        "MST Người mua", "Tên Người mua",
+        "Tiền chưa thuế", "Tiền thuế", "Tổng tiền", "Trạng thái"
+    ]
+    
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+    
+    # Data rows
+    for row_idx, row in enumerate(rows, 2):
+        data = dict(row)
+        ws.cell(row=row_idx, column=1, value=row_idx - 1).border = thin_border
+        ws.cell(row=row_idx, column=2, value=data.get('tdlap', '')[:10] if data.get('tdlap') else '').border = thin_border
+        ws.cell(row=row_idx, column=3, value=data.get('shdon', '')).border = thin_border
+        ws.cell(row=row_idx, column=4, value=data.get('khhdon', '')).border = thin_border
+        ws.cell(row=row_idx, column=5, value=data.get('khmshdon', '')).border = thin_border
+        ws.cell(row=row_idx, column=6, value=data.get('nbmst', '')).border = thin_border
+        ws.cell(row=row_idx, column=7, value=data.get('nbten', '')).border = thin_border
+        ws.cell(row=row_idx, column=8, value=data.get('nmmst', '')).border = thin_border
+        ws.cell(row=row_idx, column=9, value=data.get('nmten', '')).border = thin_border
+        ws.cell(row=row_idx, column=10, value=float(data.get('tgtcthue') or 0)).border = thin_border
+        ws.cell(row=row_idx, column=11, value=float(data.get('tgtthue') or 0)).border = thin_border
+        ws.cell(row=row_idx, column=12, value=float(data.get('tgtttbso') or 0)).border = thin_border
+        ws.cell(row=row_idx, column=13, value=data.get('tthai', '')).border = thin_border
+    
+    # Auto-size columns
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[column].width = adjusted_width
+    
+    # Save to BytesIO
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    # Generate filename with date range
+    filename = f"hoadon_{from_date or 'all'}_{to_date or 'all'}.xlsx"
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
     )
 
 

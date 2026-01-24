@@ -11,6 +11,8 @@ const state = {
     invoiceSize: 20,
     invoiceTotal: 0,
     invoicePages: 1,
+    invoicesLoaded: false, // Track if user has searched
+    companies: [], // Cache companies list
 };
 
 // DOM Elements
@@ -28,10 +30,13 @@ const elements = {
 
     // Invoices
     invoicesTable: document.getElementById('invoicesTable'),
+    companySelect: document.getElementById('companySelect'),
+    invoiceTypeSelect: document.getElementById('invoiceTypeSelect'),
     searchInput: document.getElementById('searchInput'),
     fromDate: document.getElementById('fromDate'),
     toDate: document.getElementById('toDate'),
     filterBtn: document.getElementById('filterBtn'),
+    exportBtn: document.getElementById('exportBtn'),
     prevPage: document.getElementById('prevPage'),
     nextPage: document.getElementById('nextPage'),
     pageInfo: document.getElementById('pageInfo'),
@@ -88,7 +93,13 @@ function navigate(page) {
 
     // Load data
     if (page === 'dashboard') loadDashboard();
-    else if (page === 'invoices') loadInvoices();
+    else if (page === 'invoices') {
+        loadCompaniesDropdown();
+        // Don't auto-load invoices - wait for user to filter
+        if (!state.invoicesLoaded) {
+            showInvoiceEmptyState();
+        }
+    }
     else if (page === 'companies') loadCompanies();
 }
 
@@ -166,15 +177,84 @@ function renderChart(data) {
 // Invoices
 // ========================================
 
-async function loadInvoices() {
-    const search = elements.searchInput.value;
+function showInvoiceEmptyState() {
+    elements.invoicesTable.innerHTML = `
+        <tr>
+            <td colspan="7" class="empty empty-state">
+                <div class="empty-icon">🔍</div>
+                <div class="empty-text">Vui lòng chọn công ty, loại hóa đơn và khoảng thời gian, sau đó nhấn <strong>Lọc</strong> để tìm kiếm.</div>
+            </td>
+        </tr>
+    `;
+    elements.pageInfo.textContent = 'Trang 1 / 1';
+}
+
+async function loadCompaniesDropdown() {
+    // Only load if not already loaded
+    if (state.companies.length > 0) return;
+
+    const data = await api('/companies');
+    if (data && data.items) {
+        state.companies = data.items;
+        elements.companySelect.innerHTML = '<option value="">-- Chọn công ty --</option>' +
+            data.items.map(c => `<option value="${c.tax_code}">${c.company_name || c.tax_code}</option>`).join('');
+    }
+}
+
+function validateInvoiceFilters() {
+    const company = elements.companySelect.value;
+    const invoiceType = elements.invoiceTypeSelect.value;
     const fromDate = elements.fromDate.value;
     const toDate = elements.toDate.value;
 
-    let endpoint = `/invoices?page=${state.invoicePage}&size=${state.invoiceSize}`;
-    if (search) endpoint += `&search=${encodeURIComponent(search)}`;
-    if (fromDate) endpoint += `&from_date=${fromDate}`;
-    if (toDate) endpoint += `&to_date=${toDate}`;
+    if (!company) {
+        alert('Vui lòng chọn công ty');
+        return false;
+    }
+    if (!invoiceType) {
+        alert('Vui lòng chọn loại hóa đơn (Vào/Ra)');
+        return false;
+    }
+    if (!fromDate || !toDate) {
+        alert('Vui lòng chọn khoảng thời gian');
+        return false;
+    }
+    if (new Date(fromDate) > new Date(toDate)) {
+        alert('Ngày bắt đầu phải nhỏ hơn ngày kết thúc');
+        return false;
+    }
+    return true;
+}
+
+function getInvoiceFilterParams() {
+    const company = elements.companySelect.value;
+    const invoiceType = elements.invoiceTypeSelect.value;
+    const fromDate = elements.fromDate.value;
+    const toDate = elements.toDate.value;
+    const search = elements.searchInput.value;
+
+    let params = `from_date=${fromDate}&to_date=${toDate}`;
+
+    // Hóa đơn Vào (Mua): MST người mua = MST công ty
+    // Hóa đơn Ra (Bán): MST người bán = MST công ty
+    if (invoiceType === 'in') {
+        params += `&buyer_tax_code=${company}`;
+    } else if (invoiceType === 'out') {
+        params += `&tax_code=${company}`;
+    }
+
+    if (search) params += `&search=${encodeURIComponent(search)}`;
+
+    return params;
+}
+
+async function loadInvoices() {
+    if (!validateInvoiceFilters()) return;
+
+    elements.invoicesTable.innerHTML = '<tr><td colspan="7" class="empty">Đang tải...</td></tr>';
+
+    const filterParams = getInvoiceFilterParams();
+    let endpoint = `/invoices?page=${state.invoicePage}&size=${state.invoiceSize}&${filterParams}`;
 
     const data = await api(endpoint);
 
@@ -183,11 +263,12 @@ async function loadInvoices() {
         return;
     }
 
+    state.invoicesLoaded = true;
     state.invoiceTotal = data.total;
     state.invoicePages = data.pages;
 
     if (data.items.length === 0) {
-        elements.invoicesTable.innerHTML = '<tr><td colspan="7" class="empty">Không có hóa đơn nào</td></tr>';
+        elements.invoicesTable.innerHTML = '<tr><td colspan="7" class="empty">Không có hóa đơn nào phù hợp</td></tr>';
     } else {
         elements.invoicesTable.innerHTML = data.items.map(inv => `
             <tr onclick="showInvoiceDetail('${inv.id}')">
@@ -205,6 +286,49 @@ async function loadInvoices() {
     elements.pageInfo.textContent = `Trang ${state.invoicePage} / ${state.invoicePages}`;
     elements.prevPage.disabled = state.invoicePage <= 1;
     elements.nextPage.disabled = state.invoicePage >= state.invoicePages;
+}
+
+async function exportToExcel() {
+    if (!validateInvoiceFilters()) return;
+
+    const filterParams = getInvoiceFilterParams();
+    const exportUrl = `${API_BASE}/invoices/export?${filterParams}`;
+
+    // Show loading state
+    elements.exportBtn.disabled = true;
+    elements.exportBtn.textContent = '⏳ Đang xuất...';
+
+    try {
+        const response = await fetch(exportUrl);
+        if (!response.ok) {
+            throw new Error('Export failed');
+        }
+
+        // Get filename from Content-Disposition header or use default
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = 'invoices.xlsx';
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename="?([^"]+)"?/);
+            if (match) filename = match[1];
+        }
+
+        // Download the file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+    } catch (error) {
+        console.error('Export error:', error);
+        alert('Lỗi khi xuất Excel. Vui lòng thử lại.');
+    } finally {
+        elements.exportBtn.disabled = false;
+        elements.exportBtn.textContent = '📊 Export Excel';
+    }
 }
 
 async function showInvoiceDetail(id) {
@@ -507,8 +631,10 @@ document.addEventListener('DOMContentLoaded', () => {
         loadInvoices();
     });
 
+    elements.exportBtn.addEventListener('click', exportToExcel);
+
     elements.searchInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && state.invoicesLoaded) {
             state.invoicePage = 1;
             loadInvoices();
         }

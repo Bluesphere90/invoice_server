@@ -8,10 +8,10 @@
     "time": "2026-01-23T14:26:27.940188",
     "message": "connection already closed"
   },
-  "total_invoices_seen": 15875,
+  "total_invoices_seen": 15899,
   "total_invoices_new": 456,
-  "total_detail_success": 1332,
+  "total_detail_success": 1356,
   "total_detail_failed": 16,
-  "last_run_started": "2026-01-22T19:00:01.643577",
-  "last_run_completed": "2026-01-19T19:08:30.892234"
+  "last_run_started": "2026-01-23T19:00:01.350555",
+  "last_run_completed": "2026-01-24T15:26:47.068496"
 }
