@@ -2,7 +2,7 @@
 import threading
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 
-from backend.database import get_connection
+from backend.database import get_db
 from backend.database.company_repository import CompanyRepository
 from backend.collector.job_manager import JobManager, JobStatus, run_collector_job
 from backend.api.schemas.collector import (
@@ -12,11 +12,6 @@ from backend.api.schemas.collector import (
 )
 
 router = APIRouter(prefix="/collector", tags=["collector"])
-
-
-def get_db():
-    """Dependency to get database connection."""
-    return get_connection()
 
 
 @router.post("/run", response_model=CollectorRunResponse)

@@ -2,7 +2,7 @@
  * Invoice Dashboard - Main Application
  */
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = `http://${window.location.hostname}:8000/api`;
 
 // State
 const state = {
@@ -111,9 +111,16 @@ async function api(endpoint, options = {}) {
             ...options,
             headers: {
                 'Content-Type': 'application/json',
+                ...Auth.getAuthHeader(),
                 ...options.headers,
             },
         });
+
+        // Handle 401 - redirect to login
+        if (response.status === 401) {
+            Auth.logout();
+            return null;
+        }
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -613,6 +620,11 @@ function formatDate(dateStr) {
 // ========================================
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Check authentication first
+    if (!Auth.checkAuth()) {
+        return; // Will redirect to login
+    }
+
     // Navigation
     elements.navItems.forEach(item => {
         item.addEventListener('click', (e) => {

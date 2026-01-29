@@ -31,6 +31,11 @@ class Settings:
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
     API_SECRET_KEY: str = os.getenv("API_SECRET_KEY", "change_me_in_production")
 
+    # JWT Authentication
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "super-secret-jwt-key-change-in-production")
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "480"))  # 8 hours
+
     # Environment
     ENV: str = os.getenv("ENV", "development")
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"

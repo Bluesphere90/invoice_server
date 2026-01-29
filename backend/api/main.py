@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
 from backend.database import init_database, close_connection
-from backend.api.routes import invoices_router, companies_router, collector_router
+from backend.api.routes import invoices_router, companies_router, collector_router, auth_router
 
 
 @asynccontextmanager
@@ -60,6 +60,7 @@ async def health():
 
 
 # Include routers
+app.include_router(auth_router, prefix="/api")
 app.include_router(invoices_router, prefix="/api")
 app.include_router(companies_router, prefix="/api")
 app.include_router(collector_router, prefix="/api")

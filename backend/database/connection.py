@@ -27,8 +27,36 @@ def get_connection():
         )
         _connection.autocommit = False
         logger.info("Database connected successfully")
+    
+    # Check if connection is in a bad state and try to recover
+    try:
+        from psycopg2 import extensions
+        status = _connection.get_transaction_status()
+        if status == extensions.TRANSACTION_STATUS_INERROR:
+            logger.warning("Database connection in error state, performing rollback...")
+            _connection.rollback()
+    except Exception as e:
+        logger.error(f"Error checking connection status: {e}")
+        # If we can't even check status, close it and let next call recreate it
+        try:
+            _connection.close()
+        except:
+            pass
+        _connection = None
+        return get_connection()
 
     return _connection
+
+
+def get_db():
+    """FastAPI dependency that provides a database connection."""
+    conn = get_connection()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def close_connection():

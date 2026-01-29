@@ -1,7 +1,7 @@
 """Company API routes."""
 from fastapi import APIRouter, HTTPException, Depends
 
-from backend.database import get_connection
+from backend.database import get_db
 from backend.database.company_repository import CompanyRepository
 from backend.api.schemas import (
     CompanyCreate,
@@ -11,11 +11,6 @@ from backend.api.schemas import (
 )
 
 router = APIRouter(prefix="/companies", tags=["companies"])
-
-
-def get_db():
-    """Dependency to get database connection."""
-    return get_connection()
 
 
 @router.get("", response_model=CompanyListResponse)

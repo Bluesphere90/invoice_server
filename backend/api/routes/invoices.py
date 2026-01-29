@@ -5,7 +5,7 @@ import io
 from fastapi import APIRouter, Query, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 
-from backend.database import get_connection
+from backend.database import get_db
 from backend.api.schemas import (
     InvoiceSummary, 
     InvoiceDetail, 
@@ -15,11 +15,6 @@ from backend.api.schemas import (
 )
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
-
-
-def get_db():
-    """Dependency to get database connection."""
-    return get_connection()
 
 
 def build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search):

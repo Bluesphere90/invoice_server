@@ -177,6 +177,11 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
         
         # Get profile
         manager.update_job(job_id, message="Đang lấy thông tin profile...")
+        
+        # Add a small delay for GDT system stability
+        import time
+        time.sleep(2)
+        
         profile_service = ProfileService(http_client)
         profile = profile_service.fetch_profile()
 
