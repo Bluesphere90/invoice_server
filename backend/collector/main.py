@@ -7,6 +7,7 @@ Multi-company invoice collection service:
 3. Retry logic for failed invoices
 """
 import sys
+import time
 from datetime import date, timedelta
 
 from backend.config import settings
@@ -19,6 +20,7 @@ from backend.collector.captcha import SvgCaptchaSolver
 from backend.collector.invoice import InvoiceListService, InvoiceDetailWorker
 from backend.observability import HealthRecorder
 from backend.observability.logger import get_logger, configure_root_logger
+from backend.observability.telegram import TelegramNotifier
 
 # Setup root logger (once)
 configure_root_logger()
@@ -34,6 +36,7 @@ def collect_for_company(
     health: HealthRecorder,
     from_date: date,
     to_date: date,
+    notifier: TelegramNotifier = None,
 ):
     """
     Collect invoices for a single company.
@@ -103,11 +106,14 @@ def collect_for_company(
                 logger.error(f"Detail failed for {identifier.id}: {e}")
                 health.inc("total_detail_failed")
         
-        return None  # No error
+        return {"tax_code": tax_code, "invoices": total, "error": None}
         
     except Exception as e:
         logger.exception(f"Failed to collect for {tax_code}: {e}")
-        return str(e)
+        # Send login failed alert if it's a login error
+        if notifier and "login" in str(e).lower():
+            notifier.send_login_failed(tax_code, str(e))
+        return {"tax_code": tax_code, "invoices": 0, "error": str(e)}
 
 
 def retry_failed_invoices(
@@ -133,6 +139,14 @@ def run_collector():
 
     health = HealthRecorder()
     health.mark("last_run_started")
+    
+    # Initialize Telegram notifier
+    notifier = TelegramNotifier()
+    
+    # Track timing
+    start_time = time.time()
+    results = []
+    errors = []
 
     try:
         # Initialize database
@@ -161,6 +175,9 @@ def run_collector():
         
         logger.info(f"Found {len(companies)} active companies")
         
+        # Send startup notification
+        notifier.send_collector_started(len(companies))
+        
         # Date range (last 30 days by default)
         to_date = date.today()
         from_date = to_date - timedelta(days=30)
@@ -168,7 +185,7 @@ def run_collector():
         
         # Process each company
         for company in companies:
-            error = collect_for_company(
+            result = collect_for_company(
                 company=company,
                 invoice_repo=invoice_repo,
                 item_repo=item_repo,
@@ -176,12 +193,32 @@ def run_collector():
                 health=health,
                 from_date=from_date,
                 to_date=to_date,
+                notifier=notifier,
             )
             
+            results.append(result)
+            if result.get("error"):
+                errors.append({"tax_code": result["tax_code"], "error": result["error"]})
+            
             # Update company sync status
-            company_repo.update_last_sync(company['tax_code'], error)
+            company_repo.update_last_sync(company['tax_code'], result.get("error"))
 
         health.mark("last_run_completed")
+        
+        # Calculate metrics
+        duration = time.time() - start_time
+        total_invoices = sum(r.get("invoices", 0) for r in results)
+        new_invoices = health.state.get("total_invoices_new", 0)
+        
+        # Send completion notification
+        notifier.send_collector_result(
+            companies_processed=len(companies),
+            total_invoices=total_invoices,
+            new_invoices=new_invoices,
+            duration_seconds=duration,
+            errors=errors if errors else None
+        )
+        
         logger.info("=" * 60)
         logger.info("Invoice Collector Completed!")
         logger.info("=" * 60)
@@ -189,6 +226,12 @@ def run_collector():
     except Exception as e:
         logger.exception(f"Collector failed: {e}")
         health.error(str(e))
+        
+        # Send critical error notification
+        notifier.send_error_alert(
+            error_type="Collector Fatal Error",
+            message_text=str(e)
+        )
         raise
     finally:
         close_connection()

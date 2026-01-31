@@ -4,6 +4,7 @@ Collector Job Manager
 Manages background collector jobs with in-memory tracking.
 """
 import uuid
+import time
 import threading
 from datetime import date, datetime
 from typing import Dict, Optional
@@ -11,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from backend.observability.logger import get_logger
+from backend.observability.telegram import TelegramNotifier
 
 logger = get_logger(__name__)
 
@@ -148,6 +150,8 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
     from backend.collector.invoice import InvoiceListService, InvoiceDetailWorker
     
     manager = JobManager()
+    notifier = TelegramNotifier()
+    start_time = time.time()
     
     try:
         manager.update_job(job_id, status=JobStatus.RUNNING, message="Đang khởi tạo...")
@@ -251,6 +255,16 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
             invoices_processed=processed
         )
         
+        # Send Telegram notification
+        duration = time.time() - start_time
+        notifier.send_job_completed(
+            job_id=job_id,
+            tax_code=tax_code,
+            invoices_found=total,
+            invoices_processed=processed,
+            duration_seconds=duration
+        )
+        
         logger.info(f"Job {job_id}: Completed. Processed {processed}/{total} invoices")
         
     except Exception as e:
@@ -260,4 +274,11 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
             status=JobStatus.FAILED,
             error=str(e),
             message=f"Lỗi: {str(e)}"
+        )
+        
+        # Send Telegram error notification
+        notifier.send_job_failed(
+            job_id=job_id,
+            tax_code=company.get('tax_code', 'unknown'),
+            error=str(e)
         )

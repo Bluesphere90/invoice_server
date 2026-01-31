@@ -13,9 +13,9 @@ module.exports = {
     apps: [
         {
             name: "invoice-api",
-            script: "uvicorn",
+            script: "./venv/bin/uvicorn",
             args: "backend.api.main:app --host 0.0.0.0 --port 8000",
-            interpreter: "python3",
+            interpreter: "none",
             cwd: "/home/tran-ninh/OtherProjects/invoice_server",
             instances: 1,
             autorestart: true,
@@ -37,13 +37,14 @@ module.exports = {
         },
         {
             name: "invoice-collector",
-            script: "python3",
+            script: "./venv/bin/python3",
             args: "-m backend.collector.main",
+            interpreter: "none",
             cwd: "/home/tran-ninh/OtherProjects/invoice_server",
             instances: 1,
             autorestart: true,
             watch: false,
-            cron_restart: "0 */6 * * *",  // Restart every 6 hours
+            cron_restart: "0 */6 * * *",
             max_memory_restart: "300M",
             env: {
                 ENV: "development"
@@ -56,6 +57,20 @@ module.exports = {
             log_date_format: "YYYY-MM-DD HH:mm:ss Z",
             merge_logs: true,
             time: true
+        },
+        {
+            name: "invoice-frontend",
+            script: "python3",
+            args: "-m http.server 5500",
+            cwd: "/home/tran-ninh/OtherProjects/invoice_server/frontend",
+            instances: 1,
+            autorestart: true,
+            watch: false,
+            error_file: "../storage/logs/pm2-frontend-error.log",
+            out_file: "../storage/logs/pm2-frontend-out.log",
+            log_date_format: "YYYY-MM-DD HH:mm:ss Z",
+            time: true
         }
     ]
 };
+

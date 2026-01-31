@@ -13,3 +13,4 @@ openpyxl>=3.1.0
 # Security
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+httpx

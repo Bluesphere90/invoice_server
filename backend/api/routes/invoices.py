@@ -111,7 +111,8 @@ async def export_invoices_excel(
     conn = Depends(get_db),
 ):
     """
-    Export invoices to Excel file.
+    Export invoices to Excel file with detailed line items (flattened).
+    Each invoice item becomes a separate row with repeated invoice header info.
     """
     try:
         from openpyxl import Workbook
@@ -119,15 +120,62 @@ async def export_invoices_excel(
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed")
     
+    # Value mappings
+    TTHAI_MAP = {
+        1: "Hóa đơn mới",
+        2: "Hóa đơn thay thế",
+        3: "Hóa đơn điều chỉnh",
+        4: "Hóa đơn bị thay thế",
+        5: "Hóa đơn đã bị điều chỉnh",
+        6: "Hóa đơn bị hủy",
+    }
+    
+    KHMSHDON_MAP = {
+        1: "Hóa đơn GTGT",
+        2: "Hóa đơn bán hàng",
+        3: "Phiếu xuất kho",
+        4: "Hóa đơn khác",
+    }
+    
+    TTXLY_MAP = {
+        -1: "Chưa tra cứu",
+        0: "Chưa kiểm tra",
+        1: "Đã tiếp nhận",
+        2: "Hóa đơn có sai sót",
+        3: "Hóa đơn không đủ điều kiện",
+        4: "Hóa đơn không hợp lệ",
+        5: "Đã cấp mã hóa đơn",
+        6: "Tổng cục thuế đã nhận",
+        7: "Hóa đơn giả mạo",
+        8: "Đã kiểm tra",
+    }
+    
     where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
     
-    # Fetch all matching data (no pagination for export)
+    # Fetch flattened data with LEFT JOIN to include invoices without items
+    # Note: ii.tthue is TEXT type, needs casting
     data_sql = f"""
-        SELECT nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon, 
-               tdlap, tgtcthue, tgtthue, tgtttbso, tthai
-        FROM invoices 
+        SELECT 
+            -- Invoice ID for tracking
+            i.id AS invoice_id,
+            -- Invoice header info (14 columns)
+            i.khhdon, i.shdon, i.tdlap, i.dvtte, i.tgia,
+            i.nbten, i.nbmst, i.nbdchi, i.nky, i.mhdon, i.ncma,
+            i.nmten, i.nmmst, i.nmdchi,
+            -- Invoice totals (3 columns)
+            i.tgtcthue, i.tgtthue, i.tgtttbso,
+            -- Invoice status (3 columns)
+            i.khmshdon, i.tthai, i.ttxly,
+            -- Item detail (14 columns)
+            ii.stt AS item_stt, ii.tchat, ii.mhhdvu, ii.ten AS item_ten,
+            ii.dvtinh, ii.sluong, ii.dgia, ii.tlckhau, ii.stckhau,
+            ii.ltsuat, ii.tsuat, ii.thtien, 
+            CAST(NULLIF(ii.tthue, '') AS DOUBLE PRECISION) AS item_tthue,
+            (COALESCE(ii.thtien, 0) + COALESCE(CAST(NULLIF(ii.tthue, '') AS DOUBLE PRECISION), 0)) AS thtcthue
+        FROM invoices i
+        LEFT JOIN invoice_items ii ON i.id = ii.idhdon
         WHERE {where_clause}
-        ORDER BY tdlap DESC NULLS LAST, shdon DESC NULLS LAST
+        ORDER BY i.tdlap DESC NULLS LAST, i.shdon DESC NULLS LAST, ii.stt ASC NULLS LAST
     """
     
     with conn.cursor() as cur:
@@ -137,25 +185,34 @@ async def export_invoices_excel(
     # Create Excel workbook
     wb = Workbook()
     ws = wb.active
-    ws.title = "Hóa đơn"
+    ws.title = "Chi tiết hóa đơn"
     
-    # Header style
+    # Styles
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="6C5CE7", end_color="6C5CE7", fill_type="solid")
-    header_alignment = Alignment(horizontal="center", vertical="center")
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     thin_border = Border(
         left=Side(style='thin'),
         right=Side(style='thin'),
         top=Side(style='thin'),
         bottom=Side(style='thin')
     )
+    number_format = '#,##0'
     
-    # Headers
+    # Headers (32 columns)
     headers = [
-        "STT", "Ngày lập", "Số HĐ", "Ký hiệu", "Mẫu số",
-        "MST Người bán", "Tên Người bán",
-        "MST Người mua", "Tên Người mua",
-        "Tiền chưa thuế", "Tiền thuế", "Tổng tiền", "Trạng thái"
+        # Invoice header (14)
+        "STT", "Ký hiệu HĐ", "Số HĐ", "Ngày lập", "ĐVT tiền", "Tỷ giá",
+        "Tên NB", "MST NB", "Địa chỉ NB", "Ngày ký", "Mã HĐ", "Ngày cấp mã",
+        "Tên NM", "MST NM", "Địa chỉ NM",
+        # Invoice totals (3)
+        "Tiền chưa thuế", "Tiền thuế", "Tổng tiền",
+        # Invoice status (3)
+        "Loại HĐ", "Trạng thái", "Kết quả kiểm tra",
+        # Item detail (14)
+        "STT dòng", "Tính chất", "Mã HHDV", "Tên hàng hóa, dịch vụ",
+        "ĐVT", "Số lượng", "Đơn giá", "TL chiết khấu", "ST chiết khấu",
+        "Loại thuế suất", "Thuế suất", "Thành tiền", "Tiền thuế", "TT có thuế"
     ]
     
     for col, header in enumerate(headers, 1):
@@ -165,35 +222,146 @@ async def export_invoices_excel(
         cell.alignment = header_alignment
         cell.border = thin_border
     
+    # Freeze header row
+    ws.freeze_panes = "A2"
+    
     # Data rows
+    last_invoice_id = None
     for row_idx, row in enumerate(rows, 2):
         data = dict(row)
-        ws.cell(row=row_idx, column=1, value=row_idx - 1).border = thin_border
-        ws.cell(row=row_idx, column=2, value=data.get('tdlap', '')[:10] if data.get('tdlap') else '').border = thin_border
-        ws.cell(row=row_idx, column=3, value=data.get('shdon', '')).border = thin_border
-        ws.cell(row=row_idx, column=4, value=data.get('khhdon', '')).border = thin_border
-        ws.cell(row=row_idx, column=5, value=data.get('khmshdon', '')).border = thin_border
-        ws.cell(row=row_idx, column=6, value=data.get('nbmst', '')).border = thin_border
-        ws.cell(row=row_idx, column=7, value=data.get('nbten', '')).border = thin_border
-        ws.cell(row=row_idx, column=8, value=data.get('nmmst', '')).border = thin_border
-        ws.cell(row=row_idx, column=9, value=data.get('nmten', '')).border = thin_border
-        ws.cell(row=row_idx, column=10, value=float(data.get('tgtcthue') or 0)).border = thin_border
-        ws.cell(row=row_idx, column=11, value=float(data.get('tgtthue') or 0)).border = thin_border
-        ws.cell(row=row_idx, column=12, value=float(data.get('tgtttbso') or 0)).border = thin_border
-        ws.cell(row=row_idx, column=13, value=data.get('tthai', '')).border = thin_border
+        invoice_id = data.get('invoice_id')
+        is_first_item = (invoice_id != last_invoice_id)
+        col = 1
+        
+        # STT
+        ws.cell(row=row_idx, column=col, value=row_idx - 1).border = thin_border
+        col += 1
+        
+        # Invoice header columns
+        ws.cell(row=row_idx, column=col, value=data.get('khhdon') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('shdon') or '').border = thin_border
+        col += 1
+        tdlap = data.get('tdlap')
+        ws.cell(row=row_idx, column=col, value=tdlap[:10] if tdlap else '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('dvtte') or 'VND').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('tgia') or 1).border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('nbten') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('nbmst') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('nbdchi') or '').border = thin_border
+        col += 1
+        nky = data.get('nky')
+        ws.cell(row=row_idx, column=col, value=nky[:10] if nky else '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('mhdon') or '').border = thin_border
+        col += 1
+        ncma = data.get('ncma')
+        ws.cell(row=row_idx, column=col, value=ncma[:10] if ncma else '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('nmten') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('nmmst') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('nmdchi') or '').border = thin_border
+        col += 1
+        
+        # Invoice totals (number format) - only on first item
+        if is_first_item:
+            cell = ws.cell(row=row_idx, column=col, value=float(data.get('tgtcthue') or 0))
+            cell.border = thin_border
+            cell.number_format = number_format
+        else:
+            ws.cell(row=row_idx, column=col, value='').border = thin_border
+        col += 1
+        if is_first_item:
+            cell = ws.cell(row=row_idx, column=col, value=float(data.get('tgtthue') or 0))
+            cell.border = thin_border
+            cell.number_format = number_format
+        else:
+            ws.cell(row=row_idx, column=col, value='').border = thin_border
+        col += 1
+        if is_first_item:
+            cell = ws.cell(row=row_idx, column=col, value=float(data.get('tgtttbso') or 0))
+            cell.border = thin_border
+            cell.number_format = number_format
+        else:
+            ws.cell(row=row_idx, column=col, value='').border = thin_border
+        col += 1
+        
+        # Invoice status (mapped values)
+        khmshdon_val = data.get('khmshdon')
+        ws.cell(row=row_idx, column=col, value=KHMSHDON_MAP.get(khmshdon_val, str(khmshdon_val) if khmshdon_val else '')).border = thin_border
+        col += 1
+        tthai_val = data.get('tthai')
+        ws.cell(row=row_idx, column=col, value=TTHAI_MAP.get(tthai_val, str(tthai_val) if tthai_val else '')).border = thin_border
+        col += 1
+        ttxly_val = data.get('ttxly')
+        ws.cell(row=row_idx, column=col, value=TTXLY_MAP.get(ttxly_val, str(ttxly_val) if ttxly_val else '')).border = thin_border
+        col += 1
+        
+        # Item detail columns
+        ws.cell(row=row_idx, column=col, value=data.get('item_stt') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('tchat') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('mhhdvu') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('item_ten') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('dvtinh') or '').border = thin_border
+        col += 1
+        cell = ws.cell(row=row_idx, column=col, value=float(data.get('sluong') or 0) if data.get('sluong') else '')
+        cell.border = thin_border
+        col += 1
+        cell = ws.cell(row=row_idx, column=col, value=float(data.get('dgia') or 0) if data.get('dgia') else '')
+        cell.border = thin_border
+        cell.number_format = number_format
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('tlckhau') or '').border = thin_border
+        col += 1
+        cell = ws.cell(row=row_idx, column=col, value=float(data.get('stckhau') or 0) if data.get('stckhau') else '')
+        cell.border = thin_border
+        cell.number_format = number_format
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('ltsuat') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('tsuat') or '').border = thin_border
+        col += 1
+        cell = ws.cell(row=row_idx, column=col, value=float(data.get('thtien') or 0) if data.get('thtien') else '')
+        cell.border = thin_border
+        cell.number_format = number_format
+        col += 1
+        cell = ws.cell(row=row_idx, column=col, value=float(data.get('item_tthue') or 0) if data.get('item_tthue') else '')
+        cell.border = thin_border
+        cell.number_format = number_format
+        col += 1
+        cell = ws.cell(row=row_idx, column=col, value=float(data.get('thtcthue') or 0) if data.get('thtcthue') else '')
+        cell.border = thin_border
+        cell.number_format = number_format
+        
+        # Update last_invoice_id for next iteration
+        last_invoice_id = invoice_id
     
-    # Auto-size columns
-    for col in ws.columns:
-        max_length = 0
-        column = col[0].column_letter
-        for cell in col:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        adjusted_width = min(max_length + 2, 50)
-        ws.column_dimensions[column].width = adjusted_width
+    # Auto-size columns (with reasonable limits)
+    column_widths = [
+        5, 12, 10, 12, 8, 8,  # STT, Ký hiệu, Số HĐ, Ngày lập, ĐVT tiền, Tỷ giá
+        25, 15, 30, 12, 15, 12,  # Tên/MST/ĐC NB, Ngày ký, Mã HĐ, Ngày cấp mã
+        25, 15, 30,  # Tên/MST/ĐC NM
+        15, 12, 15,  # Tiền chưa thuế, Tiền thuế, Tổng tiền
+        18, 22, 22,  # Loại HĐ, Trạng thái, Kết quả kiểm tra
+        8, 10, 12, 35,  # STT dòng, Tính chất, Mã HHDV, Tên HH
+        10, 10, 12, 12, 12,  # ĐVT, SL, Đơn giá, TL CK, ST CK
+        15, 10, 12, 12, 12  # Loại TS, TS, Thành tiền, Tiền thuế, TT có thuế
+    ]
+    
+    for idx, width in enumerate(column_widths, 1):
+        col_letter = ws.cell(row=1, column=idx).column_letter
+        ws.column_dimensions[col_letter].width = width
     
     # Save to BytesIO
     output = io.BytesIO()
@@ -201,7 +369,7 @@ async def export_invoices_excel(
     output.seek(0)
     
     # Generate filename with date range
-    filename = f"hoadon_{from_date or 'all'}_{to_date or 'all'}.xlsx"
+    filename = f"chitiet_hoadon_{from_date or 'all'}_{to_date or 'all'}.xlsx"
     
     return StreamingResponse(
         output,
