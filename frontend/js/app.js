@@ -13,6 +13,7 @@ const state = {
     invoicePages: 1,
     invoicesLoaded: false, // Track if user has searched
     companies: [], // Cache companies list
+    editingCompany: null, // Track company being edited
 };
 
 // DOM Elements
@@ -430,8 +431,10 @@ async function loadCompanies() {
                 <td>${c.username}</td>
                 <td><span class="badge ${c.is_active ? 'badge-success' : 'badge-danger'}">${c.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></td>
                 <td>
+                    <button class="btn btn-secondary" onclick="editCompany('${c.tax_code}')">✏️ Sửa</button>
                     <button class="btn btn-secondary" onclick="toggleCompany('${c.tax_code}', ${!c.is_active})">${c.is_active ? 'Tạm dừng' : 'Kích hoạt'}</button>
                     ${c.is_active ? `<button class="btn btn-primary" onclick="showCollectorModal('${c.tax_code}', '${c.company_name || c.tax_code}')">📥 Thu thập</button>` : ''}
+                    <button class="btn btn-danger" onclick="deleteCompany('${c.tax_code}')">🗑️ Xóa</button>
                 </td>
             </tr>
         `).join('');
@@ -446,27 +449,87 @@ async function toggleCompany(taxCode, activate) {
     loadCompanies();
 }
 
+async function editCompany(taxCode) {
+    // Fetch company data
+    const company = await api(`/companies/${taxCode}`);
+    if (!company) {
+        alert('Không thể tải thông tin công ty');
+        return;
+    }
+
+    // Set editing state
+    state.editingCompany = taxCode;
+
+    // Populate form
+    document.getElementById('companyTaxCode').value = company.tax_code;
+    document.getElementById('companyTaxCode').disabled = true; // Cannot change tax code
+    document.getElementById('companyName').value = company.company_name || '';
+    document.getElementById('companyUsername').value = company.username;
+    document.getElementById('companyPassword').value = ''; // Don't show password
+    document.getElementById('companyPassword').placeholder = 'Để trống nếu không đổi';
+
+    // Update modal title
+    document.getElementById('companyModalTitle').textContent = 'Sửa công ty';
+
+    // Show modal
+    elements.companyModal.classList.add('active');
+}
+
+async function deleteCompany(taxCode) {
+    if (!confirm(`Bạn có chắc muốn xóa công ty ${taxCode}?\n\nLưu ý: Thao tác này sẽ vô hiệu hóa công ty, không xóa dữ liệu.`)) {
+        return;
+    }
+
+    const result = await api(`/companies/${taxCode}`, {
+        method: 'DELETE',
+    });
+
+    // DELETE returns 204 No Content, so result might be null but still successful
+    loadCompanies();
+    // Refresh companies cache
+    state.companies = [];
+    loadCompaniesDropdown();
+}
+
 async function saveCompany(e) {
     e.preventDefault();
 
+    const taxCode = document.getElementById('companyTaxCode').value;
+    const isEditing = state.editingCompany !== null;
+
     const data = {
-        tax_code: document.getElementById('companyTaxCode').value,
         company_name: document.getElementById('companyName').value,
         username: document.getElementById('companyUsername').value,
-        password: document.getElementById('companyPassword').value,
     };
 
-    const result = await api('/companies', {
-        method: 'POST',
+    // Only include password if provided
+    const password = document.getElementById('companyPassword').value;
+    if (password) {
+        data.password = password;
+    }
+
+    // Add tax_code only for new companies
+    if (!isEditing) {
+        data.tax_code = taxCode;
+    }
+
+    const endpoint = isEditing ? `/companies/${taxCode}` : '/companies';
+    const method = isEditing ? 'PUT' : 'POST';
+
+    const result = await api(endpoint, {
+        method: method,
         body: JSON.stringify(data),
     });
 
     if (result) {
         elements.companyModal.classList.remove('active');
         elements.companyForm.reset();
+        state.editingCompany = null;
         loadCompanies();
+        // Refresh companies cache
+        state.companies = [];
     } else {
-        alert('Lỗi thêm công ty. Vui lòng kiểm tra lại.');
+        alert(isEditing ? 'Lỗi cập nhật công ty.' : 'Lỗi thêm công ty. Vui lòng kiểm tra lại.');
     }
 }
 
@@ -669,7 +732,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     elements.addCompanyBtn.addEventListener('click', () => {
+        state.editingCompany = null;
         document.getElementById('companyTaxCode').disabled = false;
+        document.getElementById('companyPassword').placeholder = '';
+        document.getElementById('companyModalTitle').textContent = 'Thêm công ty';
         elements.companyForm.reset();
         elements.companyModal.classList.add('active');
     });

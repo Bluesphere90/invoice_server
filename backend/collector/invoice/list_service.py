@@ -106,7 +106,7 @@ class InvoiceListService:
         base_path = self._build_base_path(is_purchase, is_sco)
 
         search = self._build_search(start, end)
-        sort = "tdlap:desc,khmshdon:asc,shdon:desc"
+        sort = "tdlap:desc"
 
         params = {
             "sort": sort,

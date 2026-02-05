@@ -42,9 +42,9 @@ module.exports = {
             interpreter: "none",
             cwd: "/home/tran-ninh/OtherProjects/invoice_server",
             instances: 1,
-            autorestart: true,
+            autorestart: false,
             watch: false,
-            cron_restart: "0 */6 * * *",
+            cron_restart: "0 3,15,21 * * *",
             max_memory_restart: "300M",
             env: {
                 ENV: "development"
@@ -69,6 +69,28 @@ module.exports = {
             error_file: "../storage/logs/pm2-frontend-error.log",
             out_file: "../storage/logs/pm2-frontend-out.log",
             log_date_format: "YYYY-MM-DD HH:mm:ss Z",
+            time: true
+        },
+        {
+            name: "invoice-telegram-bot",
+            script: "./venv/bin/python3",
+            args: "-m backend.telegram.main",
+            interpreter: "none",
+            cwd: "/home/tran-ninh/OtherProjects/invoice_server",
+            instances: 1,
+            autorestart: true,
+            watch: false,
+            max_memory_restart: "200M",
+            env: {
+                ENV: "development"
+            },
+            env_production: {
+                ENV: "production"
+            },
+            error_file: "./storage/logs/pm2-telegram-bot-error.log",
+            out_file: "./storage/logs/pm2-telegram-bot-out.log",
+            log_date_format: "YYYY-MM-DD HH:mm:ss Z",
+            merge_logs: true,
             time: true
         }
     ]

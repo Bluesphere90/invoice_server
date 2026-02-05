@@ -154,47 +154,84 @@ class TelegramNotifier:
     
     def send_collector_result(
         self,
-        companies_processed: int,
-        total_invoices: int,
-        new_invoices: int,
+        company_results: List[Dict],
         duration_seconds: float,
-        errors: Optional[List[Dict[str, str]]] = None
     ):
         """
-        Send collector run summary.
+        Send detailed collector run summary with per-company breakdown.
         
         Args:
-            companies_processed: Number of companies processed
-            total_invoices: Total invoices found
-            new_invoices: New invoices saved
+            company_results: List of result dicts from collect_for_company()
+                Each contains: tax_code, login_success, invoices_detected,
+                invoices_downloaded, download_failed, error, error_details
             duration_seconds: How long the collector ran
-            errors: List of {"tax_code": "...", "error": "..."}
         """
         duration_str = self._format_duration(duration_seconds)
         
-        status_emoji = "✅" if not errors else "⚠️"
-        status_text = "Thành công" if not errors else "Có lỗi"
+        # Calculate aggregates
+        total_companies = len(company_results)
+        login_success = sum(1 for r in company_results if r.get("login_success", False))
+        login_failed = total_companies - login_success
+        total_detected = sum(r.get("invoices_detected", 0) for r in company_results)
+        total_downloaded = sum(r.get("invoices_downloaded", 0) for r in company_results)
+        total_failed = sum(r.get("download_failed", 0) for r in company_results)
+        
+        # Determine status
+        has_errors = login_failed > 0 or total_failed > 0
+        status_emoji = "✅" if not has_errors else "⚠️"
+        status_text = "Thành công" if not has_errors else "Có lỗi"
+        
+        # Build per-company detail lines
+        company_lines = []
+        for r in company_results:
+            tax_code = r.get("tax_code", "N/A")
+            login_ok = r.get("login_success", False)
+            detected = r.get("invoices_detected", 0)
+            downloaded = r.get("invoices_downloaded", 0)
+            
+            login_icon = "✅" if login_ok else "❌"
+            
+            if login_ok:
+                if detected == downloaded:
+                    line = f"• {tax_code}: {login_icon} | {detected} phát hiện, {downloaded} tải"
+                else:
+                    line = f"• {tax_code}: {login_icon} | {detected} phát hiện, {downloaded} tải ⚠️"
+            else:
+                error_short = (r.get("error", "Lỗi") or "Lỗi không xác định")[:40]
+                line = f"• {tax_code}: {login_icon} | {error_short}"
+            
+            company_lines.append(line)
+        
+        companies_detail = "\n".join(company_lines)
         
         message = f"""
 📊 <b>Collector Report</b>
 
 {status_emoji} Status: {status_text}
-🏢 Companies: {companies_processed}
-📄 Invoices: {total_invoices} tìm thấy, {new_invoices} mới
 ⏱️ Duration: {duration_str}
 🕐 Time: {self._format_timestamp()}
+
+📋 <b>Chi tiết theo MST:</b>
+{companies_detail}
+
+📈 <b>Tổng kết:</b>
+• Companies: {total_companies} ({login_success} OK, {login_failed} lỗi)
+• Invoices: {total_detected} phát hiện, {total_downloaded} tải về
         """.strip()
         
         # Add error details if any
-        if errors:
-            error_lines = []
-            for err in errors[:5]:  # Max 5 errors to avoid spam
-                error_lines.append(f"• {err['tax_code']}: {err['error'][:50]}")
-            
-            message += "\n\n❌ <b>Errors:</b>\n" + "\n".join(error_lines)
-            
-            if len(errors) > 5:
-                message += f"\n... và {len(errors) - 5} lỗi khác"
+        all_errors = []
+        for r in company_results:
+            if r.get("error"):
+                all_errors.append(f"• {r['tax_code']}: {r['error'][:60]}")
+            for detail in r.get("error_details", []):
+                all_errors.append(f"  └ {detail}")
+        
+        if all_errors:
+            error_section = "\n".join(all_errors[:10])  # Limit to 10 lines
+            message += f"\n\n❌ <b>Lỗi chi tiết:</b>\n{error_section}"
+            if len(all_errors) > 10:
+                message += f"\n... và {len(all_errors) - 10} lỗi khác"
         
         return self.send_message(message)
     

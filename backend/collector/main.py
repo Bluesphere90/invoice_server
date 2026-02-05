@@ -40,12 +40,32 @@ def collect_for_company(
 ):
     """
     Collect invoices for a single company.
+    
+    Returns detailed result dict:
+        - tax_code: Company tax code
+        - login_success: True if login succeeded
+        - invoices_detected: Total invoices found in period
+        - invoices_downloaded: Successfully downloaded details
+        - download_failed: Failed to download details
+        - error: Main error message if login/fatal error
+        - error_details: List of specific error messages
     """
     tax_code = company['tax_code']
     username = company['username']
     password = company['password']
     
     logger.info(f"Processing company: {tax_code}")
+    
+    # Initialize result
+    result = {
+        "tax_code": tax_code,
+        "login_success": False,
+        "invoices_detected": 0,
+        "invoices_downloaded": 0,
+        "download_failed": 0,
+        "error": None,
+        "error_details": [],
+    }
     
     # Create new HTTP client for this company
     http_client = HoaDonHttpClient()
@@ -55,6 +75,7 @@ def collect_for_company(
     try:
         # Login
         token = login_service.login(username, password)
+        result["login_success"] = True
         logger.info(f"Login successful for {tax_code}")
         
         # Get profile to verify
@@ -95,25 +116,33 @@ def collect_for_company(
         detail_worker = InvoiceDetailWorker(http_client, invoice_repo, item_repo)
         
         all_identifiers = purchase_ids + sold_ids
-        total = len(all_identifiers)
+        result["invoices_detected"] = len(all_identifiers)
         
         for i, identifier in enumerate(all_identifiers, 1):
-            logger.info(f"Processing detail {i}/{total}: {identifier.id}")
+            logger.info(f"Processing detail {i}/{len(all_identifiers)}: {identifier.id}")
             try:
                 detail_worker.process(identifier)
                 health.inc("total_detail_success")
+                result["invoices_downloaded"] += 1
             except Exception as e:
                 logger.error(f"Detail failed for {identifier.id}: {e}")
                 health.inc("total_detail_failed")
+                result["download_failed"] += 1
+                # Track specific errors (limit to avoid spam)
+                if len(result["error_details"]) < 5:
+                    result["error_details"].append(f"{identifier.id[:20]}...: {str(e)[:50]}")
         
-        return {"tax_code": tax_code, "invoices": total, "error": None}
+        return result
         
     except Exception as e:
         logger.exception(f"Failed to collect for {tax_code}: {e}")
+        result["error"] = str(e)
+        
         # Send login failed alert if it's a login error
         if notifier and "login" in str(e).lower():
             notifier.send_login_failed(tax_code, str(e))
-        return {"tax_code": tax_code, "invoices": 0, "error": str(e)}
+        
+        return result
 
 
 def retry_failed_invoices(
@@ -146,7 +175,6 @@ def run_collector():
     # Track timing
     start_time = time.time()
     results = []
-    errors = []
 
     try:
         # Initialize database
@@ -197,26 +225,22 @@ def run_collector():
             )
             
             results.append(result)
-            if result.get("error"):
-                errors.append({"tax_code": result["tax_code"], "error": result["error"]})
             
             # Update company sync status
             company_repo.update_last_sync(company['tax_code'], result.get("error"))
 
         health.mark("last_run_completed")
         
-        # Calculate metrics
+        # Calculate metrics from detailed results
         duration = time.time() - start_time
-        total_invoices = sum(r.get("invoices", 0) for r in results)
-        new_invoices = health.state.get("total_invoices_new", 0)
+        total_detected = sum(r.get("invoices_detected", 0) for r in results)
+        total_downloaded = sum(r.get("invoices_downloaded", 0) for r in results)
+        login_success_count = sum(1 for r in results if r.get("login_success", False))
         
-        # Send completion notification
+        # Send completion notification with detailed results
         notifier.send_collector_result(
-            companies_processed=len(companies),
-            total_invoices=total_invoices,
-            new_invoices=new_invoices,
+            company_results=results,
             duration_seconds=duration,
-            errors=errors if errors else None
         )
         
         logger.info("=" * 60)
