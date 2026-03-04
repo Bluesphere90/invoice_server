@@ -116,7 +116,7 @@ async def get_current_user(
     return UserAuth(
         id=token_data.user_id,
         username=token_data.username,
-        role=token_data.role or "user"
+        role=(token_data.role or "user").lower()
     )
 
 

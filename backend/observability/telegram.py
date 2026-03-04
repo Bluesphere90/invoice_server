@@ -152,10 +152,13 @@ class TelegramNotifier:
         
         return self.send_message(message, disable_notification=True)
     
+    from datetime import date
     def send_collector_result(
         self,
         company_results: List[Dict],
         duration_seconds: float,
+        from_date: Optional[date] = None,
+        to_date: Optional[date] = None,
     ):
         """
         Send detailed collector run summary with per-company breakdown.
@@ -163,8 +166,10 @@ class TelegramNotifier:
         Args:
             company_results: List of result dicts from collect_for_company()
                 Each contains: tax_code, login_success, invoices_detected,
-                invoices_downloaded, download_failed, error, error_details
+                invoices_downloaded, download_failed, error, error_details, company_name
             duration_seconds: How long the collector ran
+            from_date: Start date of collection
+            to_date: End date of collection
         """
         duration_str = self._format_duration(duration_seconds)
         
@@ -180,11 +185,26 @@ class TelegramNotifier:
         has_errors = login_failed > 0 or total_failed > 0
         status_emoji = "✅" if not has_errors else "⚠️"
         status_text = "Thành công" if not has_errors else "Có lỗi"
+
+        # Format date range
+        date_range_str = ""
+        if from_date and to_date:
+            f_str = from_date.strftime("%d/%m")
+            t_str = to_date.strftime("%d/%m")
+            date_range_str = f"📅 <b>{f_str} - {t_str}</b>\n"
         
         # Build per-company detail lines
         company_lines = []
         for r in company_results:
             tax_code = r.get("tax_code", "N/A")
+            company_name = r.get("company_name", "")
+            
+            # Format display name: "Company Name (MST)" or just "MST"
+            if company_name and company_name != tax_code:
+                display_name = f"{company_name} ({tax_code})"
+            else:
+                display_name = tax_code
+
             login_ok = r.get("login_success", False)
             detected = r.get("invoices_detected", 0)
             downloaded = r.get("invoices_downloaded", 0)
@@ -193,12 +213,12 @@ class TelegramNotifier:
             
             if login_ok:
                 if detected == downloaded:
-                    line = f"• {tax_code}: {login_icon} | {detected} phát hiện, {downloaded} tải"
+                    line = f"• {display_name}: {login_icon} | {detected} phát hiện, {downloaded} tải"
                 else:
-                    line = f"• {tax_code}: {login_icon} | {detected} phát hiện, {downloaded} tải ⚠️"
+                    line = f"• {display_name}: {login_icon} | {detected} phát hiện, {downloaded} tải ⚠️"
             else:
                 error_short = (r.get("error", "Lỗi") or "Lỗi không xác định")[:40]
-                line = f"• {tax_code}: {login_icon} | {error_short}"
+                line = f"• {display_name}: {login_icon} | {error_short}"
             
             company_lines.append(line)
         
@@ -208,6 +228,7 @@ class TelegramNotifier:
 📊 <b>Collector Report</b>
 
 {status_emoji} Status: {status_text}
+{date_range_str}
 ⏱️ Duration: {duration_str}
 🕐 Time: {self._format_timestamp()}
 

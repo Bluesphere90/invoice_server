@@ -7,12 +7,15 @@ from fastapi.responses import StreamingResponse
 
 from backend.database import get_db
 from backend.api.schemas import (
-    InvoiceSummary, 
-    InvoiceDetail, 
+    InvoiceSummary,
+    InvoiceDetail,
     InvoiceItemResponse,
     InvoiceListResponse,
     InvoiceStatsResponse,
 )
+from backend.api.auth import get_current_user, UserAuth
+from backend.database.user_repository import UserRepository
+from backend.database.company_repository import CompanyRepository
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -55,43 +58,97 @@ async def list_invoices(
     tax_code: Optional[str] = Query(None, description="Filter by seller tax code (nbmst)"),
     buyer_tax_code: Optional[str] = Query(None, description="Filter by buyer tax code (nmmst)"),
     search: Optional[str] = Query(None, description="Search in invoice number or company name"),
+    current_user: UserAuth = Depends(get_current_user),
     conn = Depends(get_db),
 ):
     """
     List invoices with pagination and filters.
+    Enforces user-company access control for non-admin users.
     """
     offset = (page - 1) * size
+
+    # For non-admin users, restrict access to assigned companies
+    user_repo = UserRepository(conn)
+    company_repo = CompanyRepository(conn)
     
-    where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
-    
+    if current_user.role != "admin":
+        # Get user's assigned companies
+        user_companies = user_repo.get_user_companies(current_user.id)
+        company_ids = [comp['id'] for comp in user_companies]
+        
+        if not company_ids:
+            # User has no assigned companies, return empty result
+            return InvoiceListResponse(
+                items=[],
+                total=0,
+                page=page,
+                size=size,
+                pages=0,
+            )
+        
+        # Get tax codes for these companies
+        company_tax_codes = []
+        for comp in user_companies:
+            company_tax_codes.append(comp['tax_code'])
+        
+        # Modify the where clause to restrict to user's companies
+        where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
+        
+        # Add company restriction for non-admin users
+        if company_tax_codes:
+            # Create placeholders for company tax codes
+            company_placeholders = ",".join(["%s"] * len(company_tax_codes))
+            
+            # Modify where clause to include company restrictions
+            if where_clause == "1=1":
+                # If no other filters, just add company filter
+                where_clause = f"(nbmst IN ({company_placeholders}) OR nmmst IN ({company_placeholders}))"
+                params = company_tax_codes + company_tax_codes
+            else:
+                # If there are other filters, add company restriction to existing where clause
+                where_clause = f"({where_clause}) AND (nbmst IN ({company_placeholders}) OR nmmst IN ({company_placeholders}))"
+                params = params + company_tax_codes + company_tax_codes
+        else:
+            # User has no companies assigned, return empty result
+            return InvoiceListResponse(
+                items=[],
+                total=0,
+                page=page,
+                size=size,
+                pages=0,
+            )
+    else:
+        # Admin users can see all invoices
+        where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
+
     # Count total
     count_sql = f"SELECT COUNT(*) as count FROM invoices WHERE {where_clause}"
-    
+
     # Fetch data
     data_sql = f"""
-        SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon, 
+        SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
                tdlap, tgtcthue, tgtthue, tgtttbso, tthai
-        FROM invoices 
+        FROM invoices
         WHERE {where_clause}
         ORDER BY tdlap DESC NULLS LAST, shdon DESC NULLS LAST
         LIMIT %s OFFSET %s
     """
-    
+
     with conn.cursor() as cur:
         # Get total count
         cur.execute(count_sql, params if params else None)
         count_row = cur.fetchone()
         total = count_row['count'] if isinstance(count_row, dict) else count_row[0]
-        
+
         # Get data with pagination
         data_params = params + [size, offset]
         cur.execute(data_sql, data_params)
         rows = cur.fetchall()
-    
+
     # Rows are already dicts from RealDictCursor
     items = [InvoiceSummary(**dict(row)) for row in rows]
     pages = (total + size - 1) // size if total > 0 else 1
-    
+
     return InvoiceListResponse(
         items=items,
         total=total,
@@ -108,18 +165,20 @@ async def export_invoices_excel(
     tax_code: Optional[str] = Query(None, description="Filter by seller tax code (nbmst)"),
     buyer_tax_code: Optional[str] = Query(None, description="Filter by buyer tax code (nmmst)"),
     search: Optional[str] = Query(None, description="Search in invoice number or company name"),
+    current_user: UserAuth = Depends(get_current_user),
     conn = Depends(get_db),
 ):
     """
     Export invoices to Excel file with detailed line items (flattened).
     Each invoice item becomes a separate row with repeated invoice header info.
+    Enforces user-company access control for non-admin users.
     """
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed")
-    
+
     # Value mappings
     TTHAI_MAP = {
         1: "Hóa đơn mới",
@@ -129,14 +188,14 @@ async def export_invoices_excel(
         5: "Hóa đơn đã bị điều chỉnh",
         6: "Hóa đơn bị hủy",
     }
-    
+
     KHMSHDON_MAP = {
         1: "Hóa đơn GTGT",
         2: "Hóa đơn bán hàng",
         3: "Phiếu xuất kho",
         4: "Hóa đơn khác",
     }
-    
+
     TTXLY_MAP = {
         -1: "Chưa tra cứu",
         0: "Chưa kiểm tra",
@@ -149,13 +208,42 @@ async def export_invoices_excel(
         7: "Hóa đơn giả mạo",
         8: "Đã kiểm tra",
     }
+
+    # For non-admin users, restrict access to assigned companies
+    user_repo = UserRepository(conn)
+    company_repo = CompanyRepository(conn)
     
-    where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
-    
+    if current_user.role != "admin":
+        # Get user's assigned companies
+        user_companies = user_repo.get_user_companies(current_user.id)
+        company_tax_codes = [comp['tax_code'] for comp in user_companies]
+        
+        if not company_tax_codes:
+            # User has no assigned companies, return empty result
+            raise HTTPException(status_code=403, detail="No companies assigned to user")
+        
+        # Build where clause with company restrictions
+        where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
+        
+        # Add company restriction for non-admin users
+        company_placeholders = ",".join(["%s"] * len(company_tax_codes))
+        
+        if where_clause == "1=1":
+            # If no other filters, just add company filter
+            where_clause = f"(i.nbmst IN ({company_placeholders}) OR i.nmmst IN ({company_placeholders}))"
+            params = company_tax_codes + company_tax_codes
+        else:
+            # If there are other filters, add company restriction to existing where clause
+            where_clause = f"({where_clause}) AND (i.nbmst IN ({company_placeholders}) OR i.nmmst IN ({company_placeholders}))"
+            params = params + company_tax_codes + company_tax_codes
+    else:
+        # Admin users can export all invoices
+        where_clause, params = build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search)
+
     # Fetch flattened data with LEFT JOIN to include invoices without items
     # Note: ii.tthue is TEXT type, needs casting
     data_sql = f"""
-        SELECT 
+        SELECT
             -- Invoice ID for tracking
             i.id AS invoice_id,
             -- Invoice header info (14 columns)
@@ -169,7 +257,7 @@ async def export_invoices_excel(
             -- Item detail (14 columns)
             ii.stt AS item_stt, ii.tchat, ii.mhhdvu, ii.ten AS item_ten,
             ii.dvtinh, ii.sluong, ii.dgia, ii.tlckhau, ii.stckhau,
-            ii.ltsuat, ii.tsuat, ii.thtien, 
+            ii.ltsuat, ii.tsuat, ii.thtien,
             CAST(NULLIF(ii.tthue, '') AS DOUBLE PRECISION) AS item_tthue,
             (COALESCE(ii.thtien, 0) + COALESCE(CAST(NULLIF(ii.tthue, '') AS DOUBLE PRECISION), 0)) AS thtcthue
         FROM invoices i
@@ -384,43 +472,78 @@ async def export_invoices_excel(
 async def get_stats(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
+    current_user: UserAuth = Depends(get_current_user),
     conn = Depends(get_db),
 ):
     """
     Get invoice statistics for dashboard.
+    Enforces user-company access control for non-admin users.
     """
+    # For non-admin users, restrict access to assigned companies
+    user_repo = UserRepository(conn)
+    company_repo = CompanyRepository(conn)
+    
     # Build date filter
     conditions = []
     params = []
-    
+
     if from_date:
         conditions.append("tdlap >= %s")
         params.append(from_date.isoformat())
     if to_date:
         conditions.append("tdlap <= %s")
         params.append(to_date.isoformat() + "T23:59:59")
-    
+
     where_clause = " AND ".join(conditions) if conditions else "1=1"
-    
+
+    # Apply company access control for non-admin users
+    if current_user.role != "admin":
+        # Get user's assigned companies
+        user_companies = user_repo.get_user_companies(current_user.id)
+        company_tax_codes = [comp['tax_code'] for comp in user_companies]
+        
+        if not company_tax_codes:
+            # User has no assigned companies, return zero stats
+            return InvoiceStatsResponse(
+                total_invoices=0,
+                total_purchase=0,
+                total_sold=0,
+                total_amount=0.0,
+                total_tax=0.0,
+                invoices_by_month={},
+            )
+        
+        # Add company restriction to where clause
+        company_placeholders = ",".join(["%s"] * len(company_tax_codes))
+        
+        if where_clause == "1=1":
+            # If no date filters, just add company filter
+            where_clause = f"(nbmst IN ({company_placeholders}) OR nmmst IN ({company_placeholders}))"
+            params = company_tax_codes + company_tax_codes
+        else:
+            # If there are date filters, add company restriction
+            where_clause = f"({where_clause}) AND (nbmst IN ({company_placeholders}) OR nmmst IN ({company_placeholders}))"
+            params = params + company_tax_codes + company_tax_codes
+
     with conn.cursor() as cur:
         # Total counts
         cur.execute(f"""
-            SELECT 
+            SELECT
                 COUNT(*) as total,
                 COALESCE(SUM(tgtcthue), 0) as total_amount,
                 COALESCE(SUM(tgtthue), 0) as total_tax
             FROM invoices
             WHERE {where_clause}
         """, params if params else None)
-        
+
         row = cur.fetchone()
         total_invoices = row['total']
         total_amount = float(row['total_amount']) if row['total_amount'] else 0.0
         total_tax = float(row['total_tax']) if row['total_tax'] else 0.0
-        
+
         # Invoices by month (extract year-month from tdlap string)
         cur.execute(f"""
-            SELECT 
+            SELECT
                 SUBSTRING(tdlap FROM 1 FOR 7) as month,
                 COUNT(*) as cnt
             FROM invoices
@@ -429,9 +552,9 @@ async def get_stats(
             ORDER BY month DESC
             LIMIT 12
         """, params if params else None)
-        
+
         by_month = {r['month']: r['cnt'] for r in cur.fetchall() if r['month']}
-    
+
     return InvoiceStatsResponse(
         total_invoices=total_invoices,
         total_purchase=0,
@@ -445,36 +568,108 @@ async def get_stats(
 @router.get("/{invoice_id}", response_model=InvoiceDetail)
 async def get_invoice(
     invoice_id: str,
+    current_user: UserAuth = Depends(get_current_user),
     conn = Depends(get_db),
 ):
     """
     Get single invoice with items.
+    Enforces user-company access control for non-admin users.
     """
-    with conn.cursor() as cur:
-        # Get invoice header
-        cur.execute("""
-            SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
-                   tdlap, tgtcthue, tgtthue, tgtttbso, tthai,
-                   nbdchi, nmdchi, dvtte, tgtttbchu, htttoan
-            FROM invoices
-            WHERE id = %s
-        """, (invoice_id,))
-        
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Invoice not found")
-        
-        invoice_data = dict(row)
-        
-        # Get items
-        cur.execute("""
-            SELECT id, idhdon, stt, ten, dvtinh, sluong, dgia, thtien, tsuat
-            FROM invoice_items
-            WHERE idhdon = %s
-            ORDER BY stt
-        """, (invoice_id,))
-        
-        items = [InvoiceItemResponse(**dict(r)) for r in cur.fetchall()]
+    # For non-admin users, check if they have access to this invoice's companies
+    user_repo = UserRepository(conn)
+    company_repo = CompanyRepository(conn)
     
-    invoice_data["items"] = items
-    return InvoiceDetail(**invoice_data)
+    if current_user.role != "admin":
+        # Get user's assigned companies
+        user_companies = user_repo.get_user_companies(current_user.id)
+        company_tax_codes = [comp['tax_code'] for comp in user_companies]
+        
+        if not company_tax_codes:
+            # User has no assigned companies
+            raise HTTPException(status_code=403, detail="No companies assigned to user")
+        
+        # Check if the invoice belongs to one of the user's companies
+        with conn.cursor() as cur:
+            # Get invoice header to check company tax codes
+            cur.execute("""
+                SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
+                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai,
+                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan
+                FROM invoices
+                WHERE id = %s
+            """, (invoice_id,))
+            
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Invoice not found")
+            
+            invoice_data = dict(row)
+            
+            # Check if user has access to either the seller or buyer company
+            seller_tax_code = invoice_data.get('nbmst')
+            buyer_tax_code = invoice_data.get('nmmst')
+            
+            has_access = (seller_tax_code in company_tax_codes) or (buyer_tax_code in company_tax_codes)
+            
+            if not has_access:
+                raise HTTPException(status_code=403, detail="Access denied to this invoice")
+        
+        # If we reach here, user has access, so get the full invoice data
+        with conn.cursor() as cur:
+            # Get invoice header
+            cur.execute("""
+                SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
+                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai,
+                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan
+                FROM invoices
+                WHERE id = %s
+            """, (invoice_id,))
+
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Invoice not found")
+
+            invoice_data = dict(row)
+
+            # Get items
+            cur.execute("""
+                SELECT id, idhdon, stt, ten, dvtinh, sluong, dgia, thtien, tsuat
+                FROM invoice_items
+                WHERE idhdon = %s
+                ORDER BY stt
+            """, (invoice_id,))
+
+            items = [InvoiceItemResponse(**dict(r)) for r in cur.fetchall()]
+
+        invoice_data["items"] = items
+        return InvoiceDetail(**invoice_data)
+    else:
+        # Admin users can access any invoice
+        with conn.cursor() as cur:
+            # Get invoice header
+            cur.execute("""
+                SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
+                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai,
+                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan
+                FROM invoices
+                WHERE id = %s
+            """, (invoice_id,))
+
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Invoice not found")
+
+            invoice_data = dict(row)
+
+            # Get items
+            cur.execute("""
+                SELECT id, idhdon, stt, ten, dvtinh, sluong, dgia, thtien, tsuat
+                FROM invoice_items
+                WHERE idhdon = %s
+                ORDER BY stt
+            """, (invoice_id,))
+
+            items = [InvoiceItemResponse(**dict(r)) for r in cur.fetchall()]
+
+        invoice_data["items"] = items
+        return InvoiceDetail(**invoice_data)

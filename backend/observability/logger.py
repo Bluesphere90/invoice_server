@@ -1,70 +1,45 @@
 """
 Centralized logging configuration.
-Saves logs to storage/logs/collector.log and prints to console.
+Logs to console and PostgreSQL database (WARNING+ level).
 """
 import logging
 import sys
 import os
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
+
+from backend.core.db_logger import DatabaseLogHandler
 
 # Constants
-LOG_DIR = Path("storage/logs")
-LOG_FILE = LOG_DIR / "collector.log"
-MAX_BYTES = 10 * 1024 * 1024  # 10MB
-BACKUP_COUNT = 5
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# Flag to track if root logger has been configured
+_root_configured = False
+
 
 def setup_logger(name: str) -> logging.Logger:
     """
     Get a configured logger instance.
+    Uses root logger configuration, so just returns the named logger.
     """
-    logger = logging.getLogger(name)
-    
-    # Only configure if handlers haven't been added
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
-        # Check environment for debug mode
-        if os.getenv("DEBUG", "False").lower() == "true":
-            logger.setLevel(logging.DEBUG)
+    return logging.getLogger(name)
 
-        formatter = logging.Formatter(LOG_FORMAT, DATE_FORMAT)
-
-        # 1. Console Handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
-
-        # 2. File Handler
-        try:
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
-            file_handler = RotatingFileHandler(
-                LOG_FILE, 
-                maxBytes=MAX_BYTES, 
-                backupCount=BACKUP_COUNT,
-                encoding='utf-8'
-            )
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
-        except Exception as e:
-            print(f"Failed to setup file logging: {e}")
-
-    return logger
 
 def get_logger(name: str) -> logging.Logger:
-    """Wrapper to ensure setup is called or just return logger."""
-    # For simplicity, we just rely on the root logger configuration 
-    # or per-module configuration if updated.
-    # Here we can return a logger that inherits from root.
-    # But to ensure our handlers are present, we can call setup_logger for the root
-    # or specific loggers.
+    """Get a logger by name. Uses root logger configuration."""
     return logging.getLogger(name)
+
 
 def configure_root_logger():
     """
     Configure the root logger so all modules inherit these settings.
+    - Console handler: INFO+ (or DEBUG if DEBUG env is set)
+    - Database handler: WARNING+ only (to avoid database bloat)
     """
+    global _root_configured
+    
+    if _root_configured:
+        return
+    
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     
@@ -77,27 +52,25 @@ def configure_root_logger():
     if root_logger.handlers:
         root_logger.handlers.clear()
 
-    # Console
+    # 1. Console Handler - shows all logs (INFO+)
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
+    console.setLevel(logging.INFO)
     root_logger.addHandler(console)
     
-    # File
+    # 2. Database Handler - only WARNING and ERROR (to avoid database bloat)
     try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        file = RotatingFileHandler(
-            LOG_FILE,
-            maxBytes=MAX_BYTES,
-            backupCount=BACKUP_COUNT,
-            encoding='utf-8'
-        )
-        file.setFormatter(formatter)
-        root_logger.addHandler(file)
-        
-        # Log startup
-        root_logger.info("="*60)
-        root_logger.info("Logging initialized. Writing to %s", LOG_FILE.absolute())
-        root_logger.info("="*60)
-        
+        db_handler = DatabaseLogHandler(level=logging.WARNING)
+        db_handler.setFormatter(formatter)
+        root_logger.addHandler(db_handler)
+        root_logger.info("Database logging enabled for WARNING+ levels")
     except Exception as e:
-        root_logger.error("Failed to setup file logging: %s", e)
+        root_logger.warning("Failed to setup database logging: %s", e)
+        root_logger.warning("Continuing with console logging only")
+    
+    # Log startup
+    root_logger.info("=" * 60)
+    root_logger.info("Logging initialized (Console + Database)")
+    root_logger.info("=" * 60)
+    
+    _root_configured = True

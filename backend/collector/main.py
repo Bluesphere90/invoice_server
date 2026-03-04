@@ -59,6 +59,7 @@ def collect_for_company(
     # Initialize result
     result = {
         "tax_code": tax_code,
+        "company_name": company.get("company_name", ""),
         "login_success": False,
         "invoices_detected": 0,
         "invoices_downloaded": 0,
@@ -206,9 +207,22 @@ def run_collector():
         # Send startup notification
         notifier.send_collector_started(len(companies))
         
-        # Date range (last 30 days by default)
+        # Date range logic
         to_date = date.today()
-        from_date = to_date - timedelta(days=30)
+        
+        # Helper to get start of quarter
+        def get_quarter_start(d: date) -> date:
+            month = (d.month - 1) // 3 * 3 + 1
+            return date(d.year, month, 1)
+
+        # If today is Sunday (6), fetch from start of quarter
+        if to_date.weekday() == 6:
+            from_date = get_quarter_start(to_date)
+            logger.info(f"Sunday run detected. Fetching full quarter from {from_date}")
+        else:
+            # Default: last 30 days
+            from_date = to_date - timedelta(days=30)
+            
         logger.info(f"Date range: {from_date} to {to_date}")
         
         # Process each company
@@ -241,6 +255,8 @@ def run_collector():
         notifier.send_collector_result(
             company_results=results,
             duration_seconds=duration,
+            from_date=from_date,
+            to_date=to_date,
         )
         
         logger.info("=" * 60)

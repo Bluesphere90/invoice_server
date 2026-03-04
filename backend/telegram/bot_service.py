@@ -561,10 +561,24 @@ Các lệnh có sẵn:
                 WHERE {condition}
                   AND tdlap >= %s AND tdlap <= %s
                 ORDER BY tdlap DESC, shdon DESC
-                LIMIT 20
+                LIMIT 30
             """
             
+            
             with conn.cursor() as cur:
+                # First check count
+                count_sql = f"SELECT COUNT(*) as cnt FROM invoices WHERE {condition} AND tdlap >= %s AND tdlap <= %s"
+                cur.execute(count_sql, (tax_code, from_date.isoformat(), to_date.isoformat() + "T23:59:59"))
+                total_count = cur.fetchone()["cnt"]
+                
+                if total_count > 30:
+                    await self.send_message(
+                        chat_id,
+                        f"⚠️ <b>Tìm thấy {total_count} hóa đơn</b>\n\n"
+                        f"Số lượng quá lớn để hiển thị. Vui lòng chọn khoảng thời gian ngắn hơn."
+                    )
+                    return
+
                 cur.execute(sql, (tax_code, from_date.isoformat(), to_date.isoformat() + "T23:59:59"))
                 rows = cur.fetchall()
             
@@ -594,23 +608,20 @@ Các lệnh có sẵn:
             
             lines = [f"{type_emoji} <b>HĐ {type_text} - {tax_code}</b> ({days} ngày)\n"]
             
-            for i, inv in enumerate(invoices[:10], 1):
+            for i, inv in enumerate(invoices[:30], 1):
                 tdlap = inv.get("tdlap", "")[:10] if inv.get("tdlap") else "N/A"
                 shdon = inv.get("shdon", "N/A")
                 
-                # Show counterparty
+                # Show counterparty - FULL NAME
                 if is_purchase:
-                    party = inv.get("nbten", "")[:15] or inv.get("nbmst", "N/A")
+                    party = inv.get("nbten", "") or inv.get("nbmst", "N/A")
                 else:
-                    party = inv.get("nmten", "")[:15] or inv.get("nmmst", "N/A")
+                    party = inv.get("nmten", "") or inv.get("nmmst", "N/A")
                 
                 total = float(inv.get("tgtttbso") or 0)
                 total_str = self._format_money(total)
                 
                 lines.append(f"<b>#{i}</b> {tdlap} | {shdon} | {party} | {total_str}")
-            
-            if len(invoices) > 10:
-                lines.append(f"\n... và {len(invoices) - 10} hóa đơn khác")
             
             lines.append("\n→ <code>/ct &lt;số&gt;</code> để xem chi tiết")
             

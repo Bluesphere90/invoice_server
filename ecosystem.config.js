@@ -7,6 +7,12 @@
  *   pm2 stop all
  *   pm2 restart all
  *   pm2 logs
+ * 
+ * Log Rotation:
+ *   Install pm2-logrotate: pm2 install pm2-logrotate
+ *   Configure: pm2 set pm2-logrotate:max_size 10M
+ *              pm2 set pm2-logrotate:retain 3
+ *              pm2 set pm2-logrotate:compress true
  */
 
 module.exports = {
@@ -95,4 +101,3 @@ module.exports = {
         }
     ]
 };
-

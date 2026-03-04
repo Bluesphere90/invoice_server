@@ -119,8 +119,8 @@ class UserRepository:
         """List all users (without password hash)."""
         sql = """
         SELECT id, username, full_name, role, is_active, is_locked,
-               last_login, created_at
-        FROM users 
+               last_login, created_at, updated_at
+        FROM users
         ORDER BY created_at DESC
         """
         with self.conn.cursor() as cur:

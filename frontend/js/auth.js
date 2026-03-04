@@ -4,7 +4,12 @@
  */
 
 const Auth = (function () {
-    const API_BASE = `http://${window.location.hostname}:8000/api`;
+    const isProduction = window.location.hostname.includes('inv-crifvn.info.vn');
+    const API_BASE = isProduction
+        ? 'https://klm-api.inv-crifvn.info.vn/api'
+        : `http://${window.location.hostname}:8000/api`;
+
+    console.log('Using API Base:', API_BASE);
     const TOKEN_KEY = 'invoice_hub_token';
     const USER_KEY = 'invoice_hub_user';
 
@@ -146,6 +151,7 @@ const Auth = (function () {
         isAuthenticated,
         checkAuth,
         getUser,
+        getCurrentUser: getUser, // Alias for getUser
         getAuthHeader,
         fetchUserInfo,
     };

@@ -129,7 +129,7 @@ async def get_current_user_info(
         id=user["id"],
         username=user["username"],
         full_name=user.get("full_name"),
-        role=user["role"]
+        role=(user["role"] or "user").lower()
     )
 
 
@@ -200,7 +200,7 @@ async def create_user(
         username=request.username,
         password_hash=password_hash,
         full_name=request.full_name,
-        role=request.role
+        role=request.role.lower()
     )
     
     return UserResponse(

@@ -5,8 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Invoice Dashboard</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=3">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -26,9 +27,21 @@
                     <span class="nav-icon">📄</span>
                     <span>Hóa đơn</span>
                 </a>
+                <a href="#" class="nav-item" data-page="reports">
+                    <span class="nav-icon">📊</span>
+                    <span>Báo cáo</span>
+                </a>
                 <a href="#" class="nav-item" data-page="companies">
                     <span class="nav-icon">🏢</span>
                     <span>Công ty</span>
+                </a>
+                <a href="#" class="nav-item admin-only" data-page="users">
+                    <span class="nav-icon">👥</span>
+                    <span>Quản lý người dùng</span>
+                </a>
+                <a href="#" class="nav-item admin-only" data-page="logs">
+                    <span class="nav-icon">📋</span>
+                    <span>System Logs</span>
                 </a>
             </nav>
             <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid var(--border);">
@@ -145,6 +158,168 @@
                     </table>
                 </div>
             </section>
+
+            <!-- Reports Page -->
+            <section class="page" id="reportsPage">
+                <div class="filters-bar">
+                    <select class="input select-input" id="reportCompanySelect">
+                        <option value="">-- Chọn công ty --</option>
+                    </select>
+                    <input type="date" class="input" id="reportFromDate">
+                    <input type="date" class="input" id="reportToDate">
+                    <button class="btn btn-primary" id="loadReportBtn">📊 Tải báo cáo</button>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📥</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="totalIncomingAmount">0</h3>
+                            <p class="stat-label">Tổng giá trị đầu vào</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📤</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="totalOutgoingAmount">0</h3>
+                            <p class="stat-label">Tổng giá trị đầu ra</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💰</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="netTaxObligation">0</h3>
+                            <p class="stat-label">Nợ thuế GTGT</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 class="card-title">Biểu đồ VAT theo thời gian</h3>
+                    <div class="chart-container" id="vatTimelineChart"></div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 class="card-title">Luồng hóa đơn theo thời gian</h3>
+                    <div class="chart-container" id="invoiceFlowChart"></div>
+                </div>
+
+                <div class="table-card">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Ngày</th>
+                                <th>Loại</th>
+                                <th>Số HĐ</th>
+                                <th>Ký hiệu</th>
+                                <th>Đối tác</th>
+                                <th>Giá trị</th>
+                                <th>Thuế</th>
+                            </tr>
+                        </thead>
+                        <tbody id="reportsTable">
+                            <tr>
+                                <td colspan="7" class="empty empty-state">
+                                    <div class="empty-icon">📊</div>
+                                    <div class="empty-text">Vui lòng chọn công ty và khoảng thời gian, sau đó nhấn <strong>Tải báo cáo</strong>.</div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Logs Page (Admin Only) -->
+            <section class="page" id="logsPage">
+                <div class="stats-grid logs-stats">
+                    <div class="stat-card">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="warningCount">0</h3>
+                            <p class="stat-label">Warnings</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">❌</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="errorCount">0</h3>
+                            <p class="stat-label">Errors</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📊</div>
+                        <div class="stat-info">
+                            <h3 class="stat-value" id="totalLogsCount">0</h3>
+                            <p class="stat-label">Total Logs</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="filters-bar">
+                    <select class="input select-input" id="logLevelFilter">
+                        <option value="">-- Tất cả level --</option>
+                        <option value="WARNING">⚠️ WARNING</option>
+                        <option value="ERROR">❌ ERROR</option>
+                        <option value="CRITICAL">🔥 CRITICAL</option>
+                    </select>
+                    <input type="text" class="input" placeholder="Tìm theo message..." id="logSearchInput">
+                    <input type="date" class="input" id="logFromDate">
+                    <input type="date" class="input" id="logToDate">
+                    <button class="btn btn-primary" id="filterLogsBtn">🔍 Lọc</button>
+                    <button class="btn btn-danger" id="cleanupLogsBtn">🗑️ Dọn logs cũ</button>
+                </div>
+
+                <div class="table-card">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th style="width: 160px;">Thời gian</th>
+                                <th style="width: 90px;">Level</th>
+                                <th style="width: 180px;">Logger</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logsTable">
+                            <tr>
+                                <td colspan="4" class="empty">Đang tải logs...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="pagination">
+                    <button class="btn btn-icon" id="prevLogsPage">◀</button>
+                    <span id="logsPageInfo">Trang 1 / 1</span>
+                    <button class="btn btn-icon" id="nextLogsPage">▶</button>
+                </div>
+            </section>
+
+            <!-- Users Page (Admin Only) -->
+            <section class="page" id="usersPage">
+                <div class="filters-bar">
+                    <button class="btn btn-primary" id="addUserBtn">+ Thêm người dùng</button>
+                </div>
+
+                <div class="table-card">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Username</th>
+                                <th>Họ tên</th>
+                                <th>Vai trò</th>
+                                <th>Trạng thái</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTable">
+                            <tr>
+                                <td colspan="6" class="empty">Đang tải...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         </main>
     </div>
 
@@ -192,6 +367,137 @@
         </div>
     </div>
 
+    <!-- User Companies Assignment Modal -->
+    <div class="modal" id="userCompaniesModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="userCompaniesModalTitle">Phân quyền công ty</h2>
+                <button class="modal-close" id="closeUserCompaniesModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Người dùng</label>
+                    <input type="text" class="input" id="userCompaniesUsername" readonly>
+                    <input type="hidden" id="userCompaniesUserId">
+                </div>
+                <div class="form-group">
+                    <label>Công ty</label>
+                    <select class="input" id="userCompaniesSelect">
+                        <option value="">-- Chọn công ty --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Cấp quyền</label>
+                    <select class="input" id="userCompaniesAccessLevel">
+                        <option value="read">Chỉ đọc</option>
+                        <option value="write">Đọc/Ghi</option>
+                        <option value="admin">Quản trị</option>
+                    </select>
+                </div>
+                <button type="button" class="btn btn-primary btn-block" id="assignCompanyToUserBtn">
+                    Phân quyền
+                </button>
+
+                <h4 style="margin-top: 20px;">Công ty đã phân quyền</h4>
+                <div class="table-card">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Công ty</th>
+                                <th>MST</th>
+                                <th>Cấp quyền</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="userCompaniesTable">
+                            <tr>
+                                <td colspan="4" class="empty">Chưa có công ty nào</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add User Modal -->
+    <div class="modal" id="addUserModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="addUserModalTitle">Thêm người dùng</h2>
+                <button class="modal-close" id="closeAddUserModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addUserForm">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" class="input" id="addUsername" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Họ tên</label>
+                        <input type="text" class="input" id="addFullName">
+                    </div>
+                    <div class="form-group">
+                        <label>Mật khẩu</label>
+                        <input type="password" class="input" id="addPassword" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Vai trò</label>
+                        <select class="input" id="addUserRole">
+                            <option value="user">Người dùng</option>
+                            <option value="accounting">Kế toán</option>
+                            <option value="admin">Quản trị viên</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">Lưu</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div class="modal" id="editUserModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="editUserModalTitle">Sửa người dùng</h2>
+                <button class="modal-close" id="closeEditUserModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="editUserForm">
+                    <input type="hidden" id="editUserId">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" class="input" id="editUsername" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Họ tên</label>
+                        <input type="text" class="input" id="editFullName">
+                    </div>
+                    <div class="form-group">
+                        <label>Mật khẩu mới (để trống nếu không đổi)</label>
+                        <input type="password" class="input" id="editPassword" placeholder="Nhập để đổi mật khẩu">
+                    </div>
+                    <div class="form-group">
+                        <label>Vai trò</label>
+                        <select class="input" id="editUserRole">
+                            <option value="user">Người dùng</option>
+                            <option value="accounting">Kế toán</option>
+                            <option value="admin">Quản trị viên</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Trạng thái</label>
+                        <select class="input" id="editUserStatus">
+                            <option value="true">Hoạt động</option>
+                            <option value="false">Không hoạt động/Khóa</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">Lưu thay đổi</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Collector Modal -->
     <div class="modal" id="collectorModal">
         <div class="modal-content">
@@ -227,8 +533,8 @@
         </div>
     </div>
 
-    <script src="js/auth.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/auth.js?v=3"></script>
+    <script src="js/app.js?v=3"></script>
 </body>
 
 </html>

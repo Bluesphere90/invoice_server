@@ -10,10 +10,11 @@ from fastapi.responses import JSONResponse
 
 from backend.config import settings
 from backend.database import init_database, close_connection
-from backend.api.routes import invoices_router, companies_router, collector_router, auth_router
-from backend.api.auth import get_current_user
+from backend.api.routes import invoices_router, companies_router, collector_router, auth_router, logs_router, users_router
+from backend.api.routes.reports import router as reports_router
+from backend.api.auth import get_current_user, require_admin
 from backend.observability.telegram import TelegramNotifier
-from backend.observability.logger import get_logger
+from backend.observability.logger import get_logger, configure_root_logger
 
 logger = get_logger(__name__)
 
@@ -21,6 +22,9 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
+    # Setup logging first
+    configure_root_logger()
+    
     # Startup
     init_database()
     
@@ -97,11 +101,10 @@ async def health():
 
 @app.post("/api/admin/test-telegram")
 async def test_telegram(
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_admin)
 ):
     """Send a test message to Telegram. Admin only."""
-    if current_user.get("role") != "ADMIN":
-        raise HTTPException(status_code=403, detail="Admin only")
+    # Check handled by dependency
     
     notifier = TelegramNotifier()
     success = notifier.send_message(
@@ -121,3 +124,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(invoices_router, prefix="/api")
 app.include_router(companies_router, prefix="/api")
 app.include_router(collector_router, prefix="/api")
+app.include_router(logs_router, prefix="/api")
+app.include_router(users_router, prefix="/api")
+app.include_router(reports_router, prefix="/api")
+
