@@ -93,7 +93,6 @@ const elements = {
     userCompaniesTable: document.getElementById('userCompaniesTable'),
 
     // Reports page elements
-    reportsTable: document.getElementById('reportsTable'),
     reportCompanySelect: document.getElementById('reportCompanySelect'),
     reportFromDate: document.getElementById('reportFromDate'),
     reportToDate: document.getElementById('reportToDate'),
@@ -160,7 +159,7 @@ function navigate(page) {
         const today = new Date();
         const last30Days = new Date(today);
         last30Days.setDate(today.getDate() - 30);
-        
+
         elements.reportToDate.value = today.toISOString().split('T')[0];
         elements.reportFromDate.value = last30Days.toISOString().split('T')[0];
     }
@@ -335,51 +334,41 @@ function validateReportFilters() {
 async function loadReports() {
     if (!validateReportFilters()) return;
 
-    elements.reportsTable.innerHTML = '<tr><td colspan="7" class="empty">Đang tải...</td></tr>';
-
     const company = elements.reportCompanySelect.value;
     const fromDate = elements.reportFromDate.value;
     const toDate = elements.reportToDate.value;
 
-    // Load invoice flow report
-    const flowData = await api(`/reports/invoice-flow?tax_code=${company}&from_date=${fromDate}&to_date=${toDate}`);
+    const originalText = elements.loadReportBtn.textContent;
+    elements.loadReportBtn.disabled = true;
+    elements.loadReportBtn.textContent = '⏳ Đang tải...';
 
-    if (!flowData) {
-        elements.reportsTable.innerHTML = '<tr><td colspan="7" class="empty">Lỗi tải dữ liệu báo cáo</td></tr>';
-        return;
+    try {
+        // Load invoice flow report
+        const flowData = await api(`/reports/invoice-flow?tax_code=${company}&from_date=${fromDate}&to_date=${toDate}`);
+
+        if (!flowData) {
+            alert('Lỗi khi tải dữ liệu báo cáo');
+            return;
+        }
+
+        // Update summary stats
+        elements.totalIncomingAmount.textContent = formatCurrency(flowData.total_incoming_amount);
+        elements.totalOutgoingAmount.textContent = formatCurrency(Math.abs(flowData.total_outgoing_amount));
+        elements.netTaxObligation.textContent = formatCurrency(flowData.net_tax_obligation);
+
+        // Render invoice flow chart
+        renderInvoiceFlowChart(flowData.items);
+
+        // Load VAT timeline report for chart
+        const vatData = await api(`/reports/vat-timeline?tax_code=${company}&from_date=${fromDate}&to_date=${toDate}`);
+
+        if (vatData) {
+            renderVatTimelineChart(vatData.items);
+        }
+    } finally {
+        elements.loadReportBtn.disabled = false;
+        elements.loadReportBtn.textContent = originalText;
     }
-
-    // Update summary stats
-    elements.totalIncomingAmount.textContent = formatCurrency(flowData.total_incoming_amount);
-    elements.totalOutgoingAmount.textContent = formatCurrency(Math.abs(flowData.total_outgoing_amount));
-    elements.netTaxObligation.textContent = formatCurrency(flowData.net_tax_obligation);
-
-    // Populate the table
-    if (flowData.items.length === 0) {
-        elements.reportsTable.innerHTML = '<tr><td colspan="7" class="empty">Không có hóa đơn nào trong khoảng thời gian này</td></tr>';
-    } else {
-        elements.reportsTable.innerHTML = flowData.items.map(item => `
-            <tr>
-                <td>${item.date}</td>
-                <td>${item.type === 'in' ? '📥 Vào' : '📤 Ra'}</td>
-                <td>${item.invoice_number}</td>
-                <td>${item.invoice_symbol}</td>
-                <td>${item.company_name}</td>
-                <td>${formatCurrency(item.amount)}</td>
-                <td>${formatCurrency(item.tax_amount)}</td>
-            </tr>
-        `).join('');
-    }
-
-    // Load VAT timeline report for chart
-    const vatData = await api(`/reports/vat-timeline?tax_code=${company}&from_date=${fromDate}&to_date=${toDate}`);
-
-    if (vatData) {
-        renderVatTimelineChart(vatData.items);
-    }
-    
-    // Also render the invoice flow chart
-    renderInvoiceFlowChart(flowData.items);
 }
 
 function renderVatTimelineChart(items) {
@@ -460,15 +449,15 @@ function renderVatTimelineChart(items) {
             plugins: {
                 tooltip: {
                     callbacks: {
-                        label: function(context) {
+                        label: function (context) {
                             let label = context.dataset.label || '';
                             if (label) {
                                 label += ': ';
                             }
                             if (context.parsed.y !== null) {
-                                label += new Intl.NumberFormat('vi-VN', { 
-                                    style: 'currency', 
-                                    currency: 'VND' 
+                                label += new Intl.NumberFormat('vi-VN', {
+                                    style: 'currency',
+                                    currency: 'VND'
                                 }).format(context.parsed.y);
                             }
                             return label;
@@ -495,7 +484,7 @@ function renderInvoiceFlowChart(items) {
         if (!groupedByDate[item.date]) {
             groupedByDate[item.date] = { incoming: 0, outgoing: 0 };
         }
-        
+
         if (item.type === 'in') {
             groupedByDate[item.date].incoming += item.amount;
         } else {
@@ -554,15 +543,15 @@ function renderInvoiceFlowChart(items) {
             plugins: {
                 tooltip: {
                     callbacks: {
-                        label: function(context) {
+                        label: function (context) {
                             let label = context.dataset.label || '';
                             if (label) {
                                 label += ': ';
                             }
                             if (context.parsed.y !== null) {
-                                label += new Intl.NumberFormat('vi-VN', { 
-                                    style: 'currency', 
-                                    currency: 'VND' 
+                                label += new Intl.NumberFormat('vi-VN', {
+                                    style: 'currency',
+                                    currency: 'VND'
                                 }).format(Math.abs(context.parsed.y));
                             }
                             return label;

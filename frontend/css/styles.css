@@ -323,6 +323,16 @@ body {
     padding: 16px 0;
 }
 
+/* Report page - larger full-width charts */
+.report-chart-card {
+    margin-bottom: 24px;
+}
+
+.report-chart {
+    height: 400px;
+    width: 100%;
+}
+
 .chart-bar {
     flex: 1;
     background: var(--accent-gradient);

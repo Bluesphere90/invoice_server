@@ -10,7 +10,8 @@ build/
 .vscode/
 storage/captchas/
 storage/invoices/
-storage/*.log
-storage/*.json
+storage/logs/
+storage/**/*.log
+storage/**/*.json
 *.log
 .DS_Store

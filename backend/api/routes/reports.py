@@ -127,17 +127,21 @@ async def get_invoice_flow_report(
     total_incoming_tax = 0
     total_outgoing_tax = 0
     
+    # Determine target tax codes for classifying invoices
+    # Use the selected company's tax_code; fall back to user's assigned companies
+    if tax_code:
+        target_tax_codes = {tax_code}
+    else:
+        user_repo = UserRepository(conn)
+        user_companies = user_repo.get_user_companies(current_user.id)
+        target_tax_codes = {comp['tax_code'] for comp in user_companies}
+    
     for row in rows:
         row_dict = dict(row)
         
-        # Determine if this is an incoming ('in') or outgoing ('out') invoice for the user's company
-        # For simplicity, if the logged-in user can access this invoice, we'll determine type based on 
-        # which tax code matches the user's companies
-        user_repo = UserRepository(conn)
-        user_companies = user_repo.get_user_companies(current_user.id)
-        user_tax_codes = [comp['tax_code'] for comp in user_companies]
-        
-        invoice_type = 'out' if row_dict['nbmst'] in user_tax_codes else 'in'
+        # Đầu ra (Bán): nbmst (MST người bán) = MST công ty
+        # Đầu vào (Mua): nmmst (MST người mua) = MST công ty
+        invoice_type = 'out' if row_dict['nbmst'] in target_tax_codes else 'in'
         
         # Calculate amounts based on invoice type
         amount = float(row_dict['tgtcthue'] or 0)
@@ -232,10 +236,13 @@ async def get_vat_timeline_report(
         cur.execute(query, params)
         rows = cur.fetchall()
     
-    # Get user's company tax codes to determine incoming vs outgoing
-    user_repo = UserRepository(conn)
-    user_companies = user_repo.get_user_companies(current_user.id)
-    user_tax_codes = [comp['tax_code'] for comp in user_companies]
+    # Determine target tax codes for classifying invoices
+    if tax_code:
+        target_tax_codes = {tax_code}
+    else:
+        user_repo = UserRepository(conn)
+        user_companies = user_repo.get_user_companies(current_user.id)
+        target_tax_codes = {comp['tax_code'] for comp in user_companies}
     
     # Group by date and calculate incoming vs outgoing taxes
     date_data: Dict[str, Dict[str, float]] = {}
@@ -251,12 +258,11 @@ async def get_vat_timeline_report(
         if date_str not in date_data:
             date_data[date_str] = {'incoming_tax': 0, 'outgoing_tax': 0}
         
-        # Determine if this is incoming or outgoing for user's companies
-        if row_dict['nbmst'] in user_tax_codes:
-            # This is an outgoing invoice (sale) for the user's company
+        # Đầu ra (Bán): nbmst (MST người bán) = MST công ty
+        if row_dict['nbmst'] in target_tax_codes:
             date_data[date_str]['outgoing_tax'] += tax_amount
-        elif row_dict['nmmst'] in user_tax_codes:
-            # This is an incoming invoice (purchase) for the user's company
+        # Đầu vào (Mua): nmmst (MST người mua) = MST công ty
+        elif row_dict['nmmst'] in target_tax_codes:
             date_data[date_str]['incoming_tax'] += tax_amount
     
     # Convert to response format

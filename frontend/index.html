@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Invoice Dashboard</title>
-    <link rel="stylesheet" href="css/styles.css?v=3">
+    <link rel="stylesheet" href="css/styles.css?v=4">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -194,38 +194,14 @@
                     </div>
                 </div>
 
-                <div class="chart-card">
+                <div class="chart-card report-chart-card">
                     <h3 class="card-title">Biểu đồ VAT theo thời gian</h3>
-                    <div class="chart-container" id="vatTimelineChart"></div>
+                    <div class="chart-container report-chart" id="vatTimelineChart"></div>
                 </div>
 
-                <div class="chart-card">
+                <div class="chart-card report-chart-card">
                     <h3 class="card-title">Luồng hóa đơn theo thời gian</h3>
-                    <div class="chart-container" id="invoiceFlowChart"></div>
-                </div>
-
-                <div class="table-card">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Ngày</th>
-                                <th>Loại</th>
-                                <th>Số HĐ</th>
-                                <th>Ký hiệu</th>
-                                <th>Đối tác</th>
-                                <th>Giá trị</th>
-                                <th>Thuế</th>
-                            </tr>
-                        </thead>
-                        <tbody id="reportsTable">
-                            <tr>
-                                <td colspan="7" class="empty empty-state">
-                                    <div class="empty-icon">📊</div>
-                                    <div class="empty-text">Vui lòng chọn công ty và khoảng thời gian, sau đó nhấn <strong>Tải báo cáo</strong>.</div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
+                    <div class="chart-container report-chart" id="invoiceFlowChart"></div>
                 </div>
             </section>
 
@@ -533,8 +509,8 @@
         </div>
     </div>
 
-    <script src="js/auth.js?v=3"></script>
-    <script src="js/app.js?v=3"></script>
+    <script src="js/auth.js?v=4"></script>
+    <script src="js/app.js?v=4"></script>
 </body>
 
 </html>
