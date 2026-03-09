@@ -5,13 +5,13 @@
   "last_invoice_list_run": "2025-01-04T09:15:10",
   "last_invoice_detail_run": "2025-01-04T09:15:30",
   "last_error": {
-    "time": "2026-03-04T20:00:00.384988",
-    "message": "relation \"invoice_items\" does not exist\n"
+    "time": "2026-03-06T16:01:36.058514",
+    "message": "current transaction is aborted, commands ignored until end of transaction block\n"
   },
-  "total_invoices_seen": 16956,
+  "total_invoices_seen": 29133,
   "total_invoices_new": 456,
-  "total_detail_success": 2322,
-  "total_detail_failed": 16,
-  "last_run_started": "2026-03-04T20:00:00.144020",
-  "last_run_completed": "2026-03-04T15:56:32.869053"
+  "total_detail_success": 12869,
+  "total_detail_failed": 585,
+  "last_run_started": "2026-03-09T14:00:00.144560",
+  "last_run_completed": "2026-03-09T14:17:26.483869"
 }
