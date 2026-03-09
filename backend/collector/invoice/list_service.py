@@ -53,6 +53,7 @@ class InvoiceListService:
         periods = self._split_by_month(from_date, to_date)
 
         identifiers: List[InvoiceIdentifier] = []
+        seen_ids = set()
 
         for start, end in periods:
             logger.info(
@@ -71,6 +72,7 @@ class InvoiceListService:
                     is_purchase,
                     is_sco=False,
                     ignore_saved=ignore_saved,
+                    seen_ids=seen_ids,
                 )
             )
 
@@ -83,6 +85,7 @@ class InvoiceListService:
                     is_purchase,
                     is_sco=True,
                     ignore_saved=ignore_saved,
+                    seen_ids=seen_ids,
                 )
             )
 
@@ -101,6 +104,7 @@ class InvoiceListService:
         is_purchase: bool,
         is_sco: bool,
         ignore_saved: bool,
+        seen_ids: set,
     ) -> List[InvoiceIdentifier]:
 
         base_path = self._build_base_path(is_purchase, is_sco)
@@ -132,6 +136,7 @@ class InvoiceListService:
                     is_sco,
                     ignore_saved,
                     results,
+                    seen_ids,
                 )
 
             url = self._next_page(url, data.get("state"))
@@ -220,8 +225,13 @@ class InvoiceListService:
         is_sco: bool,
         ignore_saved: bool,
         out: List[InvoiceIdentifier],
+        seen_ids: set,
     ):
         invoice_id = inv["id"]
+
+        if invoice_id in seen_ids:
+            return
+        seen_ids.add(invoice_id)
 
         exists = self.repo.invoice_header_exists(invoice_id)
 

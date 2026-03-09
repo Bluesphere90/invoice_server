@@ -32,12 +32,12 @@ class InvoiceDetailWorker:
     # PUBLIC
     # =====================================================
 
-    def process(self, identifier):
+    def process(self, identifier) -> bool:
         invoice_id = identifier.id
 
         if not self.invoice_repo.should_retry_detail(invoice_id):
             logger.info("Skip invoice %s (no retry)", invoice_id)
-            return
+            return False
 
         url = build_invoice_detail_url(identifier)
 
@@ -59,7 +59,7 @@ class InvoiceDetailWorker:
                     # Rate limit protection: wait 1.5s between requests
                     # Based on testing: 0s=77% (conn errors), 1s=60%, 1.5s=87%
                     time.sleep(1.5)
-                    return
+                    return True
 
                 # -------- RATE LIMIT --------
                 if resp.status_code == 429:
@@ -74,7 +74,7 @@ class InvoiceDetailWorker:
                     invoice_id,
                 )
                 self._fail(invoice_id)
-                return
+                raise Exception(f"HTTP {resp.status_code} error fetching detail")
 
             except Exception as exc:
                 logger.exception(
@@ -85,7 +85,7 @@ class InvoiceDetailWorker:
                 retry += 1
                 if retry > self.MAX_RETRIES:
                     self._fail(invoice_id)
-                    return
+                    raise exc
                 self._backoff(retry)
 
     # =====================================================

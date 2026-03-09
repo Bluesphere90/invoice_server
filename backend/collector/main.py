@@ -122,9 +122,10 @@ def collect_for_company(
         for i, identifier in enumerate(all_identifiers, 1):
             logger.info(f"Processing detail {i}/{len(all_identifiers)}: {identifier.id}")
             try:
-                detail_worker.process(identifier)
+                was_downloaded = detail_worker.process(identifier)
                 health.inc("total_detail_success")
-                result["invoices_downloaded"] += 1
+                if was_downloaded:
+                    result["invoices_downloaded"] += 1
             except Exception as e:
                 logger.error(f"Detail failed for {identifier.id}: {e}")
                 health.inc("total_detail_failed")
