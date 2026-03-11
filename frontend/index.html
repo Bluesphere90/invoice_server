@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Invoice Dashboard</title>
-    <link rel="stylesheet" href="css/styles.css?v=4">
+    <link rel="stylesheet" href="css/styles.css?v=5">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -94,8 +94,8 @@
                         <option value="in">📥 Hóa đơn Vào (Mua)</option>
                         <option value="out">📤 Hóa đơn Ra (Bán)</option>
                     </select>
-                    <input type="date" class="input" id="fromDate">
-                    <input type="date" class="input" id="toDate">
+                    <input type="text" class="input date-input" id="fromDate" placeholder="dd/mm/yyyy" maxlength="10">
+                    <input type="text" class="input date-input" id="toDate" placeholder="dd/mm/yyyy" maxlength="10">
                     <input type="text" class="input" placeholder="Tìm kiếm..." id="searchInput">
                     <button class="btn btn-primary" id="filterBtn">🔍 Lọc</button>
                     <button class="btn btn-secondary" id="exportBtn">📊 Export Excel</button>
@@ -165,8 +165,10 @@
                     <select class="input select-input" id="reportCompanySelect">
                         <option value="">-- Chọn công ty --</option>
                     </select>
-                    <input type="date" class="input" id="reportFromDate">
-                    <input type="date" class="input" id="reportToDate">
+                    <input type="text" class="input date-input" id="reportFromDate" placeholder="dd/mm/yyyy"
+                        maxlength="10">
+                    <input type="text" class="input date-input" id="reportToDate" placeholder="dd/mm/yyyy"
+                        maxlength="10">
                     <button class="btn btn-primary" id="loadReportBtn">📊 Tải báo cáo</button>
                 </div>
 
@@ -239,8 +241,9 @@
                         <option value="CRITICAL">🔥 CRITICAL</option>
                     </select>
                     <input type="text" class="input" placeholder="Tìm theo message..." id="logSearchInput">
-                    <input type="date" class="input" id="logFromDate">
-                    <input type="date" class="input" id="logToDate">
+                    <input type="text" class="input date-input" id="logFromDate" placeholder="dd/mm/yyyy"
+                        maxlength="10">
+                    <input type="text" class="input date-input" id="logToDate" placeholder="dd/mm/yyyy" maxlength="10">
                     <button class="btn btn-primary" id="filterLogsBtn">🔍 Lọc</button>
                     <button class="btn btn-danger" id="cleanupLogsBtn">🗑️ Dọn logs cũ</button>
                 </div>
@@ -489,11 +492,13 @@
                 </div>
                 <div class="form-group">
                     <label>Từ ngày</label>
-                    <input type="date" class="input" id="collectorFromDate" required>
+                    <input type="text" class="input date-input" id="collectorFromDate" placeholder="dd/mm/yyyy"
+                        maxlength="10" required>
                 </div>
                 <div class="form-group">
                     <label>Đến ngày</label>
-                    <input type="date" class="input" id="collectorToDate" required>
+                    <input type="text" class="input date-input" id="collectorToDate" placeholder="dd/mm/yyyy"
+                        maxlength="10" required>
                 </div>
                 <div class="form-group" id="collectorProgress" style="display: none;">
                     <label>Tiến độ</label>
@@ -509,8 +514,8 @@
         </div>
     </div>
 
-    <script src="js/auth.js?v=4"></script>
-    <script src="js/app.js?v=4"></script>
+    <script src="js/auth.js?v=5"></script>
+    <script src="js/app.js?v=5"></script>
 </body>
 
 </html>

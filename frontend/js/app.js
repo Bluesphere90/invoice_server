@@ -9,6 +9,74 @@ const API_BASE = isProduction
 
 console.log('Using API Base:', API_BASE);
 
+// ========================================
+// Date Helpers (dd/mm/yyyy format)
+// ========================================
+
+/** Convert Date object to dd/mm/yyyy string */
+function dateToDisplay(d) {
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+}
+
+/** Convert dd/mm/yyyy string to yyyy-mm-dd (for API) */
+function displayToApi(ddmmyyyy) {
+    if (!ddmmyyyy) return '';
+    const parts = ddmmyyyy.split('/');
+    if (parts.length !== 3) return '';
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+}
+
+/** Parse dd/mm/yyyy string to Date object */
+function parseDisplayDate(ddmmyyyy) {
+    if (!ddmmyyyy) return null;
+    const parts = ddmmyyyy.split('/');
+    if (parts.length !== 3) return null;
+    return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+}
+
+/** Validate dd/mm/yyyy format */
+function isValidDateFormat(value) {
+    if (!value) return false;
+    const regex = /^\d{2}\/\d{2}\/\d{4}$/;
+    if (!regex.test(value)) return false;
+    const d = parseDisplayDate(value);
+    return d instanceof Date && !isNaN(d);
+}
+
+/** Auto-format date input (add slashes as user types) */
+function initDateInputMask(input) {
+    input.addEventListener('input', function (e) {
+        let value = this.value.replace(/[^\d]/g, '');
+        if (value.length > 8) value = value.substring(0, 8);
+
+        let formatted = '';
+        if (value.length > 0) formatted = value.substring(0, Math.min(2, value.length));
+        if (value.length > 2) formatted += '/' + value.substring(2, Math.min(4, value.length));
+        if (value.length > 4) formatted += '/' + value.substring(4, 8);
+
+        this.value = formatted;
+    });
+
+    input.addEventListener('keydown', function (e) {
+        // Allow: backspace, delete, tab, escape, enter, arrows
+        if ([8, 9, 27, 13, 46, 37, 39].includes(e.keyCode)) return;
+        // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
+        if ((e.ctrlKey || e.metaKey) && [65, 67, 86, 88].includes(e.keyCode)) return;
+        // Block non-numeric
+        if ((e.keyCode < 48 || e.keyCode > 57) && (e.keyCode < 96 || e.keyCode > 105)) {
+            e.preventDefault();
+        }
+    });
+}
+
+// Initialize all date input masks on DOM ready
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.date-input').forEach(initDateInputMask);
+});
+
 // State
 const state = {
     currentPage: 'dashboard',
@@ -160,8 +228,8 @@ function navigate(page) {
         const last30Days = new Date(today);
         last30Days.setDate(today.getDate() - 30);
 
-        elements.reportToDate.value = today.toISOString().split('T')[0];
-        elements.reportFromDate.value = last30Days.toISOString().split('T')[0];
+        elements.reportToDate.value = dateToDisplay(today);
+        elements.reportFromDate.value = dateToDisplay(last30Days);
     }
     else if (page === 'companies') loadCompanies();
     else if (page === 'users') loadUsers();
@@ -304,7 +372,11 @@ function validateInvoiceFilters() {
         alert('Vui lòng chọn khoảng thời gian');
         return false;
     }
-    if (new Date(fromDate) > new Date(toDate)) {
+    if (!isValidDateFormat(fromDate) || !isValidDateFormat(toDate)) {
+        alert('Ngày không hợp lệ. Vui lòng nhập theo định dạng dd/mm/yyyy');
+        return false;
+    }
+    if (parseDisplayDate(fromDate) > parseDisplayDate(toDate)) {
         alert('Ngày bắt đầu phải nhỏ hơn ngày kết thúc');
         return false;
     }
@@ -324,7 +396,11 @@ function validateReportFilters() {
         alert('Vui lòng chọn khoảng thời gian');
         return false;
     }
-    if (new Date(fromDate) > new Date(toDate)) {
+    if (!isValidDateFormat(fromDate) || !isValidDateFormat(toDate)) {
+        alert('Ngày không hợp lệ. Vui lòng nhập theo định dạng dd/mm/yyyy');
+        return false;
+    }
+    if (parseDisplayDate(fromDate) > parseDisplayDate(toDate)) {
         alert('Ngày bắt đầu phải nhỏ hơn ngày kết thúc');
         return false;
     }
@@ -335,8 +411,8 @@ async function loadReports() {
     if (!validateReportFilters()) return;
 
     const company = elements.reportCompanySelect.value;
-    const fromDate = elements.reportFromDate.value;
-    const toDate = elements.reportToDate.value;
+    const fromDate = displayToApi(elements.reportFromDate.value);
+    const toDate = displayToApi(elements.reportToDate.value);
 
     const originalText = elements.loadReportBtn.textContent;
     elements.loadReportBtn.disabled = true;
@@ -566,8 +642,8 @@ function renderInvoiceFlowChart(items) {
 function getInvoiceFilterParams() {
     const company = elements.companySelect.value;
     const invoiceType = elements.invoiceTypeSelect.value;
-    const fromDate = elements.fromDate.value;
-    const toDate = elements.toDate.value;
+    const fromDate = displayToApi(elements.fromDate.value);
+    const toDate = displayToApi(elements.toDate.value);
     const search = elements.searchInput.value;
 
     let params = `from_date=${fromDate}&to_date=${toDate}`;
@@ -882,8 +958,8 @@ function showCollectorModal(taxCode, companyName) {
     const last30Days = new Date(today);
     last30Days.setDate(today.getDate() - 30);
 
-    elements.collectorToDate.value = today.toISOString().split('T')[0];
-    elements.collectorFromDate.value = last30Days.toISOString().split('T')[0];
+    elements.collectorToDate.value = dateToDisplay(today);
+    elements.collectorFromDate.value = dateToDisplay(last30Days);
 
     // Reset progress
     elements.collectorProgress.style.display = 'none';
@@ -902,18 +978,26 @@ function showCollectorModal(taxCode, companyName) {
 
 async function startCollector() {
     const taxCode = elements.collectorTaxCode.value;
-    const fromDate = elements.collectorFromDate.value;
-    const toDate = elements.collectorToDate.value;
+    const fromDateDisplay = elements.collectorFromDate.value;
+    const toDateDisplay = elements.collectorToDate.value;
 
-    if (!fromDate || !toDate) {
+    if (!fromDateDisplay || !toDateDisplay) {
         alert('Vui lòng chọn khoảng thời gian');
         return;
     }
 
-    if (new Date(fromDate) > new Date(toDate)) {
+    if (!isValidDateFormat(fromDateDisplay) || !isValidDateFormat(toDateDisplay)) {
+        alert('Ngày không hợp lệ. Vui lòng nhập theo định dạng dd/mm/yyyy');
+        return;
+    }
+
+    if (parseDisplayDate(fromDateDisplay) > parseDisplayDate(toDateDisplay)) {
         alert('Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc');
         return;
     }
+
+    const fromDate = displayToApi(fromDateDisplay);
+    const toDate = displayToApi(toDateDisplay);
 
     // Disable button
     elements.startCollectorBtn.disabled = true;
@@ -1058,8 +1142,8 @@ async function loadLogs() {
 
     if (level) params.set('level', level);
     if (search) params.set('search', search);
-    if (fromDate) params.set('from_date', fromDate);
-    if (toDate) params.set('to_date', toDate);
+    if (fromDate && isValidDateFormat(fromDate)) params.set('from_date', displayToApi(fromDate));
+    if (toDate && isValidDateFormat(toDate)) params.set('to_date', displayToApi(toDate));
 
     const data = await api(`/logs?${params.toString()}`);
 

@@ -6,9 +6,9 @@ ALTER TABLE invoices
 ADD COLUMN IF NOT EXISTS detail_status INTEGER DEFAULT 0,
 ADD COLUMN IF NOT EXISTS detail_retry_count INTEGER DEFAULT 0;
 
--- Copy data from old columns to new columns (if any data exists)
-UPDATE invoices SET detail_status = detailstatus WHERE detailstatus IS NOT NULL;
-UPDATE invoices SET detail_retry_count = detailretrycount WHERE detailretrycount IS NOT NULL;
+-- NOTE: Removed UPDATE statements that copied from old detailstatus/detailretrycount columns.
+-- They caused detail_status to be reset to 0 on every collector run
+-- because init_database() re-runs all migrations and detailstatus is never updated by code.
 
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_invoices_detail_status ON invoices (detail_status);
