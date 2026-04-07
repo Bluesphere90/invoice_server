@@ -100,6 +100,15 @@ class InvoiceDetailWorker:
         # 1️⃣ Update invoice header (FULL JSON)
         header = dict(data)
         header["id"] = invoice_id
+        
+        # --- FIX: Extract CCCD/CMND to nmmst if nmmst is missing/empty ---
+        if not header.get("nmmst"):
+            nmttkhac = header.get("nmttkhac")
+            if isinstance(nmttkhac, list):
+                for item in nmttkhac:
+                    if isinstance(item, dict) and item.get("ttruong") == "AccountObjectIdentificationNumber":
+                        header["nmmst"] = str(item.get("dlieu"))
+                        break
 
         self.invoice_repo.upsert_invoice_summary(header)
 

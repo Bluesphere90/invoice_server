@@ -182,6 +182,13 @@ const elements = {
     warningCount: document.getElementById('warningCount'),
     errorCount: document.getElementById('errorCount'),
     totalLogsCount: document.getElementById('totalLogsCount'),
+
+    // Schedule page elements
+    scheduleExpression: document.getElementById('scheduleExpression'),
+    scheduleDescription: document.getElementById('scheduleDescription'),
+    scheduleActive: document.getElementById('scheduleActive'),
+    scheduleInfo: document.getElementById('scheduleInfo'),
+    saveScheduleBtn: document.getElementById('saveScheduleBtn'),
 };
 
 // ========================================
@@ -209,6 +216,7 @@ function navigate(page) {
         companies: 'Công ty',
         users: 'Quản lý người dùng',
         logs: 'System Logs',
+        schedule: 'Lịch chạy tự động',
     };
     elements.pageTitle.textContent = titles[page] || 'Dashboard';
 
@@ -236,6 +244,9 @@ function navigate(page) {
     else if (page === 'logs') {
         loadLogsStats();
         loadLogs();
+    }
+    else if (page === 'schedule') {
+        loadSchedule();
     }
 }
 
@@ -712,9 +723,24 @@ async function exportToExcel() {
     elements.exportBtn.textContent = '⏳ Đang xuất...';
 
     try {
-        const response = await fetch(exportUrl);
+        const response = await fetch(exportUrl, {
+            headers: {
+                ...Auth.getAuthHeader(),
+            },
+        });
+
+        if (response.status === 401) {
+            Auth.logout();
+            return;
+        }
+
         if (!response.ok) {
-            throw new Error('Export failed');
+            let errorMsg = 'Export failed';
+            try {
+                const errData = await response.json();
+                errorMsg = errData.detail || errorMsg;
+            } catch (_) {}
+            throw new Error(errorMsg);
         }
 
         // Get filename from Content-Disposition header or use default
@@ -737,7 +763,7 @@ async function exportToExcel() {
         a.remove();
     } catch (error) {
         console.error('Export error:', error);
-        alert('Lỗi khi xuất Excel. Vui lòng thử lại.');
+        alert(`Lỗi khi xuất Excel: ${error.message}`);
     } finally {
         elements.exportBtn.disabled = false;
         elements.exportBtn.textContent = '📊 Export Excel';
@@ -966,17 +992,33 @@ function showCollectorModal(taxCode, companyName) {
     elements.collectorProgressFill.style.width = '0%';
     elements.collectorStatus.textContent = '';
 
-    // Reset button
+    // Reset button state completely
     elements.startCollectorBtn.disabled = false;
     elements.startCollectorBtn.textContent = '🚀 Bắt đầu thu thập';
     elements.startCollectorBtn.classList.remove('btn-success');
     elements.startCollectorBtn.classList.add('btn-primary');
+    delete elements.startCollectorBtn.dataset.completed;
+
+    // Clear any existing polling
+    if (collectorPollingInterval) {
+        clearInterval(collectorPollingInterval);
+        collectorPollingInterval = null;
+    }
 
     // Show modal
     elements.collectorModal.classList.add('active');
 }
 
 async function startCollector() {
+    // If collection was completed, close modal and refresh
+    if (elements.startCollectorBtn.dataset.completed === 'true') {
+        elements.collectorModal.classList.remove('active');
+        if (state.currentPage === 'dashboard') {
+            loadDashboard();
+        }
+        return;
+    }
+
     const taxCode = elements.collectorTaxCode.value;
     const fromDateDisplay = elements.collectorFromDate.value;
     const toDateDisplay = elements.collectorToDate.value;
@@ -1050,26 +1092,85 @@ function pollCollectorStatus(jobId) {
 
         if (status.status === 'completed') {
             clearInterval(collectorPollingInterval);
-            elements.startCollectorBtn.textContent = '✅ Hoàn thành';
+            collectorPollingInterval = null;
+            elements.startCollectorBtn.textContent = '✅ Hoàn thành! Nhấn để đóng';
             elements.startCollectorBtn.classList.remove('btn-primary');
             elements.startCollectorBtn.classList.add('btn-success');
             elements.startCollectorBtn.disabled = false;
 
-            // Click to close modal
-            elements.startCollectorBtn.onclick = () => {
-                elements.collectorModal.classList.remove('active');
-                // Refresh dashboard stats if on dashboard
-                if (state.currentPage === 'dashboard') {
-                    loadDashboard();
-                }
-            };
+            // Mark as completed so clicking will close modal
+            elements.startCollectorBtn.dataset.completed = 'true';
         } else if (status.status === 'failed') {
             clearInterval(collectorPollingInterval);
+            collectorPollingInterval = null;
             elements.startCollectorBtn.disabled = false;
             elements.startCollectorBtn.textContent = '🚀 Thử lại';
             elements.collectorStatus.textContent = `Lỗi: ${status.error || 'Không xác định'}`;
         }
     }, 2000); // Poll every 2 seconds
+}
+
+// ========================================
+// Schedule Management
+// ========================================
+
+async function loadSchedule() {
+    const data = await api('/schedule');
+    if (data) {
+        elements.scheduleExpression.value = data.cron_expression || '';
+        elements.scheduleDescription.value = data.description || '';
+        elements.scheduleActive.value = data.is_active ? 'true' : 'false';
+
+        let infoHtml = '';
+        if (data.updated_at) {
+            infoHtml += `<p>Cập nhật lần cuối: ${formatDateTime(data.updated_at)}</p>`;
+        }
+        if (data.updated_by) {
+            infoHtml += `<p>Bởi: ${data.updated_by}</p>`;
+        }
+        elements.scheduleInfo.innerHTML = infoHtml;
+    } else {
+        elements.scheduleInfo.innerHTML = '<p style="color: var(--danger);">Chưa có cấu hình. Vui lòng chạy migration 009.</p>';
+    }
+}
+
+async function saveSchedule() {
+    const expression = elements.scheduleExpression.value.trim();
+    const description = elements.scheduleDescription.value.trim();
+    const isActive = elements.scheduleActive.value === 'true';
+
+    if (!expression) {
+        alert('Vui lòng nhập biểu thức cron');
+        return;
+    }
+
+    // Basic validation: 5 fields separated by spaces
+    if (expression.split(/\s+/).length !== 5) {
+        alert('Biểu thức cron không hợp lệ. Cần 5 trường: phút giờ ngày tháng thứ');
+        return;
+    }
+
+    elements.saveScheduleBtn.disabled = true;
+    elements.saveScheduleBtn.textContent = '⏳ Đang lưu...';
+
+    const result = await api('/schedule', {
+        method: 'PUT',
+        body: JSON.stringify({
+            cron_expression: expression,
+            description: description || null,
+            is_active: isActive,
+        }),
+    });
+
+    elements.saveScheduleBtn.disabled = false;
+    elements.saveScheduleBtn.textContent = '💾 Lưu lịch chạy';
+
+    if (result) {
+        alert('Đã cập nhật lịch chạy thành công!');
+        loadSchedule();
+    } else {
+        alert('Lỗi khi cập nhật lịch chạy.');
+    }
 }
 
 // ========================================
@@ -1392,6 +1493,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 elements.addUserModal.classList.remove('active');
             }
         });
+    }
+
+    // Schedule page events
+    if (elements.saveScheduleBtn) {
+        elements.saveScheduleBtn.addEventListener('click', saveSchedule);
     }
 
     // Report page events

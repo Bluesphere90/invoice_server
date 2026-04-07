@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import settings
 from backend.database import init_database, close_connection
-from backend.api.routes import invoices_router, companies_router, collector_router, auth_router, logs_router, users_router
+from backend.api.routes import invoices_router, companies_router, collector_router, auth_router, logs_router, users_router, schedule_router
 from backend.api.routes.reports import router as reports_router
 from backend.api.auth import get_current_user, require_admin
 from backend.observability.telegram import TelegramNotifier
@@ -127,4 +127,5 @@ app.include_router(collector_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(schedule_router, prefix="/api")
 

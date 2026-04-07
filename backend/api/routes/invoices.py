@@ -21,16 +21,21 @@ router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 
 def build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, search):
-    """Build WHERE clause and params for invoice queries."""
+    """Build WHERE clause and params for invoice queries.
+    
+    Date range filtering uses nky (ngày ký - signing date) with fallback to
+    tdlap (ngày lập) when nky is NULL: COALESCE(nky, tdlap).
+    Both columns are TEXT stored as ISO8601 strings (YYYY-MM-DD...).
+    """
     conditions = []
     params = []
     
     if from_date:
-        conditions.append("tdlap >= %s")
+        conditions.append("COALESCE(nky, tdlap) >= %s")
         params.append(from_date.isoformat())
         
     if to_date:
-        conditions.append("tdlap <= %s")
+        conditions.append("COALESCE(nky, tdlap) <= %s")
         params.append(to_date.isoformat() + "T23:59:59")
         
     if tax_code:
@@ -127,10 +132,10 @@ async def list_invoices(
     # Fetch data
     data_sql = f"""
         SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
-               tdlap, tgtcthue, tgtthue, tgtttbso, tthai
+               tdlap, nky, tgtcthue, tgtthue, tgtttbso, tthai
         FROM invoices
         WHERE {where_clause}
-        ORDER BY tdlap DESC NULLS LAST, shdon DESC NULLS LAST
+        ORDER BY nky DESC NULLS LAST, tdlap DESC NULLS LAST, shdon DESC NULLS LAST
         LIMIT %s OFFSET %s
     """
 
@@ -263,7 +268,7 @@ async def export_invoices_excel(
         FROM invoices i
         LEFT JOIN invoice_items ii ON i.id = ii.idhdon
         WHERE {where_clause}
-        ORDER BY i.tdlap DESC NULLS LAST, i.shdon DESC NULLS LAST, ii.stt ASC NULLS LAST
+        ORDER BY i.nky DESC NULLS LAST, i.tdlap DESC NULLS LAST, i.shdon DESC NULLS LAST, ii.stt ASC NULLS LAST
     """
     
     with conn.cursor() as cur:
@@ -287,16 +292,16 @@ async def export_invoices_excel(
     )
     number_format = '#,##0'
     
-    # Headers (32 columns)
+    # Headers (33 columns)
     headers = [
-        # Invoice header (14)
-        "STT", "Ký hiệu HĐ", "Số HĐ", "Ngày lập", "ĐVT tiền", "Tỷ giá",
+        # Invoice header (15)
+        "STT", "Ký hiệu mẫu số HĐ", "Ký hiệu HĐ", "Số HĐ", "Ngày lập", "ĐVT tiền", "Tỷ giá",
         "Tên NB", "MST NB", "Địa chỉ NB", "Ngày ký", "Mã HĐ", "Ngày cấp mã",
         "Tên NM", "MST NM", "Địa chỉ NM",
         # Invoice totals (3)
         "Tiền chưa thuế", "Tiền thuế", "Tổng tiền",
-        # Invoice status (3)
-        "Loại HĐ", "Trạng thái", "Kết quả kiểm tra",
+        # Invoice status (2)
+        "Trạng thái", "Kết quả kiểm tra",
         # Item detail (14)
         "STT dòng", "Tính chất", "Mã HHDV", "Tên hàng hóa, dịch vụ",
         "ĐVT", "Số lượng", "Đơn giá", "TL chiết khấu", "ST chiết khấu",
@@ -323,6 +328,11 @@ async def export_invoices_excel(
         
         # STT
         ws.cell(row=row_idx, column=col, value=row_idx - 1).border = thin_border
+        col += 1
+        
+        # Ký hiệu mẫu số HĐ (khmshdon - mapped)
+        khmshdon_val = data.get('khmshdon')
+        ws.cell(row=row_idx, column=col, value=KHMSHDON_MAP.get(khmshdon_val, str(khmshdon_val) if khmshdon_val else '')).border = thin_border
         col += 1
         
         # Invoice header columns
@@ -381,10 +391,7 @@ async def export_invoices_excel(
             ws.cell(row=row_idx, column=col, value='').border = thin_border
         col += 1
         
-        # Invoice status (mapped values)
-        khmshdon_val = data.get('khmshdon')
-        ws.cell(row=row_idx, column=col, value=KHMSHDON_MAP.get(khmshdon_val, str(khmshdon_val) if khmshdon_val else '')).border = thin_border
-        col += 1
+        # Invoice status (mapped values) - Loại HĐ removed (now in header area)
         tthai_val = data.get('tthai')
         ws.cell(row=row_idx, column=col, value=TTHAI_MAP.get(tthai_val, str(tthai_val) if tthai_val else '')).border = thin_border
         col += 1
@@ -437,11 +444,11 @@ async def export_invoices_excel(
     
     # Auto-size columns (with reasonable limits)
     column_widths = [
-        5, 12, 10, 12, 8, 8,  # STT, Ký hiệu, Số HĐ, Ngày lập, ĐVT tiền, Tỷ giá
+        5, 18, 12, 10, 12, 8, 8,  # STT, Ký hiệu mẫu số HĐ, Ký hiệu HĐ, Số HĐ, Ngày lập, ĐVT tiền, Tỷ giá
         25, 15, 30, 12, 15, 12,  # Tên/MST/ĐC NB, Ngày ký, Mã HĐ, Ngày cấp mã
         25, 15, 30,  # Tên/MST/ĐC NM
         15, 12, 15,  # Tiền chưa thuế, Tiền thuế, Tổng tiền
-        18, 22, 22,  # Loại HĐ, Trạng thái, Kết quả kiểm tra
+        22, 22,  # Trạng thái, Kết quả kiểm tra
         8, 10, 12, 35,  # STT dòng, Tính chất, Mã HHDV, Tên HH
         10, 10, 12, 12, 12,  # ĐVT, SL, Đơn giá, TL CK, ST CK
         15, 10, 12, 12, 12  # Loại TS, TS, Thành tiền, Tiền thuế, TT có thuế
@@ -483,15 +490,16 @@ async def get_stats(
     user_repo = UserRepository(conn)
     company_repo = CompanyRepository(conn)
     
-    # Build date filter
+    # Build date filter using COALESCE(nky, tdlap):
+    # - nky (ngày ký) is preferred; falls back to tdlap (ngày lập) when nky IS NULL
     conditions = []
     params = []
 
     if from_date:
-        conditions.append("tdlap >= %s")
+        conditions.append("COALESCE(nky, tdlap) >= %s")
         params.append(from_date.isoformat())
     if to_date:
-        conditions.append("tdlap <= %s")
+        conditions.append("COALESCE(nky, tdlap) <= %s")
         params.append(to_date.isoformat() + "T23:59:59")
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"

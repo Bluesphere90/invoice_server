@@ -31,6 +31,7 @@ class InvoiceSummary(BaseModel):
     khhdon: Optional[str] = None       # Ký hiệu hóa đơn
     khmshdon: Optional[int] = None     # Ký hiệu mẫu số hóa đơn
     tdlap: Optional[str] = None        # Thời điểm lập
+    nky: Optional[str] = None          # Ngày ký
     tgtcthue: Optional[float] = None   # Tổng giá trị chưa thuế
     tgtthue: Optional[float] = None    # Tổng giá trị thuế
     tgtttbso: Optional[float] = None   # Tổng tiền thanh toán bằng số

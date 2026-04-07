@@ -235,6 +235,15 @@ class InvoiceListService:
 
         exists = self.repo.invoice_header_exists(invoice_id)
 
+        # --- FIX: Extract CCCD/CMND to nmmst if nmmst is missing/empty ---
+        if not inv.get("nmmst"):
+            nmttkhac = inv.get("nmttkhac")
+            if isinstance(nmttkhac, list):
+                for item in nmttkhac:
+                    if isinstance(item, dict) and item.get("ttruong") == "AccountObjectIdentificationNumber":
+                        inv["nmmst"] = str(item.get("dlieu"))
+                        break
+
         # --- SAVE SUMMARY ---
         if not exists or not ignore_saved:
             self.repo.upsert_invoice_summary(inv)
