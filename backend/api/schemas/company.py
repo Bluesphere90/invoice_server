@@ -27,6 +27,7 @@ class CompanyUpdate(BaseModel):
 
 class CompanyResponse(CompanyBase):
     """Company response (no password)."""
+    id: int
     last_sync: Optional[datetime] = None
     last_error: Optional[str] = None
     

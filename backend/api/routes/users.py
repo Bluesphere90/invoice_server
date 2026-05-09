@@ -400,7 +400,7 @@ async def assign_company_to_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Verify company exists
-    company = company_repo.get_company_by_tax_code(str(request.company_id))
+    company = company_repo.get_company_by_id(request.company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
@@ -446,7 +446,7 @@ async def get_company_users(
     company_repo = CompanyRepository(conn)
 
     # Verify company exists
-    company = company_repo.get_company_by_tax_code(str(company_id))
+    company = company_repo.get_company_by_id(company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 

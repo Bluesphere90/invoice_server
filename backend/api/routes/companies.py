@@ -36,6 +36,7 @@ async def list_companies(
         companies = user_companies
     
     items = [CompanyResponse(
+        id=c['id'],
         tax_code=c['tax_code'],
         company_name=c.get('company_name'),
         username=c['username'],
@@ -62,7 +63,7 @@ async def create_company(
     if existing:
         raise HTTPException(status_code=400, detail="Company with this tax code already exists")
     
-    repo.add_company(
+    company_id = repo.add_company(
         tax_code=company.tax_code,
         username=company.username,
         password=company.password,
@@ -70,6 +71,7 @@ async def create_company(
     )
     
     return CompanyResponse(
+        id=company_id,
         tax_code=company.tax_code,
         company_name=company.company_name,
         username=company.username,
@@ -105,6 +107,7 @@ async def get_company(
             raise HTTPException(status_code=403, detail="Access denied to this company")
 
     return CompanyResponse(
+        id=company['id'],
         tax_code=company['tax_code'],
         company_name=company.get('company_name'),
         username=company['username'],
@@ -150,6 +153,7 @@ async def update_company(
     # Fetch updated
     updated = repo.get_company_by_tax_code(tax_code)
     return CompanyResponse(
+        id=updated['id'],
         tax_code=updated['tax_code'],
         company_name=updated.get('company_name'),
         username=updated['username'],

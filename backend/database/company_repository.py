@@ -40,6 +40,15 @@ class CompanyRepository:
         
         return dict(row) if row else None
 
+    def get_company_by_id(self, company_id: int) -> Optional[Dict[str, Any]]:
+        """Get company by id."""
+        sql = "SELECT * FROM companies WHERE id = %s"
+        with self.conn.cursor() as cur:
+            cur.execute(sql, (company_id,))
+            row = cur.fetchone()
+        
+        return dict(row) if row else None
+
     def get_company_with_password(self, tax_code: str) -> Optional[Dict[str, Any]]:
         """Get company by tax code including password (for collector jobs)."""
         sql = "SELECT id, tax_code, company_name, username, password FROM companies WHERE tax_code = %s"

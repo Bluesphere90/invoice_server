@@ -134,7 +134,7 @@ class UserRepository:
     def get_user_companies(self, user_id: int) -> List[Dict[str, Any]]:
         """Get all companies a user has access to."""
         sql = """
-        SELECT c.id, c.tax_code, c.company_name, uc.access_level
+        SELECT c.id, c.tax_code, c.company_name, c.username, c.is_active, uc.access_level
         FROM user_companies uc
         JOIN companies c ON c.id = uc.company_id
         WHERE uc.user_id = %s AND c.is_active = TRUE

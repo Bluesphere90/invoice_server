@@ -15,6 +15,7 @@ class InvoiceItemResponse(BaseModel):
     dgia: Optional[float] = None       # Đơn giá
     thtien: Optional[float] = None     # Thành tiền
     tsuat: Optional[float] = None      # Thuế suất
+    tthue: Optional[float] = None      # Tiền thuế
     
     class Config:
         from_attributes = True

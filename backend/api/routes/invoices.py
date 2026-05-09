@@ -641,7 +641,8 @@ async def get_invoice(
 
             # Get items
             cur.execute("""
-                SELECT id, idhdon, stt, ten, dvtinh, sluong, dgia, thtien, tsuat
+                SELECT id, idhdon, stt, ten, dvtinh, sluong, dgia, thtien, tsuat,
+                       CAST(NULLIF(tthue, '') AS DOUBLE PRECISION) as tthue
                 FROM invoice_items
                 WHERE idhdon = %s
                 ORDER BY stt
@@ -671,7 +672,8 @@ async def get_invoice(
 
             # Get items
             cur.execute("""
-                SELECT id, idhdon, stt, ten, dvtinh, sluong, dgia, thtien, tsuat
+                SELECT id, idhdon, stt, ten, dvtinh, sluong, dgia, thtien, tsuat,
+                       CAST(NULLIF(tthue, '') AS DOUBLE PRECISION) as tthue
                 FROM invoice_items
                 WHERE idhdon = %s
                 ORDER BY stt

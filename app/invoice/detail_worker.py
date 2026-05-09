@@ -107,7 +107,71 @@ class InvoiceDetailWorker:
 
         for item in items:
             item["idhdon"] = invoice_id
+            item["tthue"] = self._resolve_tthue(item)
             self.item_repo.upsert_item(item)
+
+    @staticmethod
+    def _resolve_tthue(item: dict) -> "str | None":
+        """
+        Layered tthue resolution:
+          1. Native tthue field
+          2. Named field in ttkhac array
+          3. Amount - thtien from ttkhac
+          4. thtien * tsuat
+          5. Exempt label -> 0
+          6. None
+        """
+        existing = item.get("tthue")
+        if existing is not None and str(existing).strip() != "":
+            return str(existing)
+
+        thtien = item.get("thtien")
+        tsuat  = item.get("tsuat")
+        ltsuat = (item.get("ltsuat") or "").strip().upper()
+        ttkhac = item.get("ttkhac")
+
+        if isinstance(ttkhac, list):
+            TAX_FIELD_NAMES = {
+                "VATAmount",
+                "Ti\u1ec1n thu\u1ebf",
+                "Ti\u1ec1n thu\u1ebf d\u00f2ng (Ti\u1ec1n thu\u1ebf GTGT)",
+                "Ti\u1ec1n thu\u1ebf s\u1ea3n ph\u1ea9m",
+                "TThue",
+            }
+            amount_val = None
+            for field in ttkhac:
+                if not isinstance(field, dict):
+                    continue
+                ttruong = field.get("ttruong", "")
+                dlieu   = field.get("dlieu")
+                if ttruong in TAX_FIELD_NAMES and dlieu is not None and str(dlieu).strip() != "":
+                    return str(dlieu)
+                if ttruong == "Amount" and dlieu is not None:
+                    try:
+                        amount_val = float(dlieu)
+                    except (ValueError, TypeError):
+                        pass
+            if amount_val is not None and thtien is not None:
+                try:
+                    derived = round(amount_val - float(thtien))
+                    if derived >= 0:
+                        return str(derived)
+                except (ValueError, TypeError):
+                    pass
+
+        if thtien is not None and tsuat is not None:
+            try:
+                if float(tsuat) > 0:
+                    return str(round(float(thtien) * float(tsuat)))
+            except (ValueError, TypeError):
+                pass
+
+        EXEMPT_LABELS = {"KKKNT", "KCT", "KHAC", "0%"}
+        if ltsuat in EXEMPT_LABELS or (tsuat is not None and float(tsuat) == 0):
+            return "0"
+
+        return None
+
 
     def _fail(self, invoice_id: str):
         self.invoice_repo.update_detail_status(
