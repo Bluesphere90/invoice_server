@@ -112,6 +112,43 @@ class InvoiceRepository:
             logger.warning(f"Failed to upsert invoice {filtered_inv.get('id')}: {e}")
             raise
 
+    def status_fields_changed(self, invoice_id: str, fields: Dict[str, Any]) -> bool:
+        """
+        Return True if any provided field value differs from current DB row.
+        """
+        compare_fields = [k for k in fields.keys() if k != "id"]
+        if not compare_fields:
+            return False
+
+        select_cols = [
+            f'"{k}"' if k in QUOTED_COLUMNS else k
+            for k in compare_fields
+        ]
+        sql = f"SELECT {', '.join(select_cols)} FROM invoices WHERE id = %s"
+
+        with self.conn.cursor() as cur:
+            cur.execute(sql, (invoice_id,))
+            row = cur.fetchone()
+
+        if not row:
+            return True
+
+        if isinstance(row, dict):
+            current = row
+        else:
+            current = {
+                field: row[idx]
+                for idx, field in enumerate(compare_fields)
+            }
+
+        for field in compare_fields:
+            old_val = self._normalize_for_compare(current.get(field))
+            new_val = self._normalize_for_compare(fields.get(field))
+            if old_val != new_val:
+                return True
+
+        return False
+
     # =====================================================
     # DETAIL RETRY LOGIC
     # =====================================================
@@ -189,4 +226,15 @@ class InvoiceRepository:
             # Convert complex objects to JSON string
             import json
             return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
+    @staticmethod
+    def _normalize_for_compare(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float, bool, str)):
+            return value
+        if isinstance(value, (list, dict)):
+            import json
+            return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return str(value)

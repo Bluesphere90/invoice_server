@@ -7,6 +7,21 @@ from app.invoice.types import InvoiceIdentifier
 
 logger = logging.getLogger(__name__)
 
+# These fields can change after invoice issuance (e.g. replaced/adjusted/cancelled).
+# We always refresh them from list API even when invoice already exists locally.
+STATUS_REFRESH_FIELDS = (
+    "tthai",
+    "ttxly",
+    "tthdclquan",
+    "hdonLquans",
+    "hdTrung",
+    "isHDTrung",
+    "khmshdgoc",
+    "khhdgoc",
+    "shdgoc",
+    "lhdgoc",
+)
+
 
 class InvoiceListService:
     """
@@ -143,6 +158,8 @@ class InvoiceListService:
         # --- SAVE SUMMARY ---
         if not exists or not ignore_saved:
             self.repo.upsert_invoice_summary(inv)
+        elif ignore_saved:
+            self._refresh_status_fields(inv)
 
         # --- ADD TO PIPELINE ---
         should_add = (
@@ -165,6 +182,19 @@ class InvoiceListService:
         )
 
         out.append(identifier)
+
+    def _refresh_status_fields(self, inv: dict):
+        payload = {"id": inv["id"]}
+        for field in STATUS_REFRESH_FIELDS:
+            if field in inv:
+                payload[field] = inv.get(field)
+
+        # No-op guard: keep write minimal when API response lacks status fields.
+        if len(payload) == 1:
+            return
+
+        if self.repo.status_fields_changed(inv["id"], payload):
+            self.repo.upsert_invoice_summary(payload)
 
     # ------------------------------------------------------------------
     # HELPERS

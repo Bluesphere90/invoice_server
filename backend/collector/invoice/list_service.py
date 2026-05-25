@@ -18,6 +18,21 @@ MAX_RETRY_ATTEMPTS = 5
 INITIAL_BACKOFF_SECONDS = 2
 MAX_BACKOFF_SECONDS = 120  # 2 minutes max wait
 
+# These fields can change after invoice issuance (e.g. replaced/adjusted/cancelled).
+# We always refresh them from list API even when invoice already exists locally.
+STATUS_REFRESH_FIELDS = (
+    "tthai",
+    "ttxly",
+    "tthdclquan",
+    "hdonLquans",
+    "hdTrung",
+    "isHDTrung",
+    "khmshdgoc",
+    "khhdgoc",
+    "shdgoc",
+    "lhdgoc",
+)
+
 
 class InvoiceListService:
     """
@@ -247,6 +262,8 @@ class InvoiceListService:
         # --- SAVE SUMMARY ---
         if not exists or not ignore_saved:
             self.repo.upsert_invoice_summary(inv)
+        elif ignore_saved:
+            self._refresh_status_fields(inv)
 
         # --- ADD TO PIPELINE ---
         should_add = (
@@ -269,6 +286,19 @@ class InvoiceListService:
         )
 
         out.append(identifier)
+
+    def _refresh_status_fields(self, inv: dict):
+        payload = {"id": inv["id"]}
+        for field in STATUS_REFRESH_FIELDS:
+            if field in inv:
+                payload[field] = inv.get(field)
+
+        # No-op guard: keep write minimal when API response lacks status fields.
+        if len(payload) == 1:
+            return
+
+        if self.repo.status_fields_changed(inv["id"], payload):
+            self.repo.upsert_invoice_summary(payload)
 
     # ------------------------------------------------------------------
     # HELPERS
@@ -323,7 +353,11 @@ class InvoiceListService:
         qs = parse_qs(parsed.query)
         qs["state"] = state
 
-        return f"{BASE_URL}{parsed.path}?{urlencode(qs, doseq=True)}"
+        # Use origin from current URL to avoid double-prefix bug:
+        # BASE_URL = ".../api" and parsed.path = "/api/sco-query/..."
+        # would incorrectly produce ".../api/api/sco-query/..."
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        return f"{origin}{parsed.path}?{urlencode(qs, doseq=True)}"
 
     @staticmethod
     def _parse_datetime(value: str) -> datetime:
