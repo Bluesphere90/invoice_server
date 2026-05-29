@@ -112,6 +112,7 @@
                                 <th>Ngày</th>
                                 <th>Số HĐ</th>
                                 <th>Ký hiệu</th>
+                                <th>Trạng thái</th>
                                 <th>Người bán</th>
                                 <th>Người mua</th>
                                 <th>Giá trị</th>
@@ -120,7 +121,7 @@
                         </thead>
                         <tbody id="invoicesTable">
                             <tr>
-                                <td colspan="7" class="empty empty-state">
+                                <td colspan="8" class="empty empty-state">
                                     <div class="empty-icon">🔍</div>
                                     <div class="empty-text">Vui lòng chọn công ty, loại hóa đơn và khoảng thời gian, sau
                                         đó nhấn <strong>Lọc</strong> để tìm kiếm.</div>
@@ -208,6 +209,37 @@
                 <div class="chart-card report-chart-card">
                     <h3 class="card-title">Luồng hóa đơn theo thời gian</h3>
                     <div class="chart-container report-chart" id="invoiceFlowChart"></div>
+                </div>
+
+                <div class="chart-card report-chart-card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <h3 class="card-title" style="margin-bottom:0;">Cặp hóa đơn điều chỉnh/thay thế</h3>
+                        <button class="btn btn-secondary" id="exportRelationReportBtn">📥 Xuất Excel cặp hóa đơn</button>
+                    </div>
+                    <div class="table-card" style="margin-top:16px;">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Loại quan hệ</th>
+                                    <th>HĐ điều chỉnh/thay thế</th>
+                                    <th>HĐ bị điều chỉnh/bị thay thế</th>
+                                    <th>MST bán</th>
+                                    <th>MST mua</th>
+                                    <th>Giá trị</th>
+                                </tr>
+                            </thead>
+                            <tbody id="invoiceRelationTable">
+                                <tr>
+                                    <td colspan="6" class="empty">Chưa tải báo cáo</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" style="margin-top:16px;">
+                        <button class="btn btn-icon" id="prevRelationPage">◀</button>
+                        <span id="relationPageInfo">Trang 1 / 1</span>
+                        <button class="btn btn-icon" id="nextRelationPage">▶</button>
+                    </div>
                 </div>
             </section>
 

@@ -92,6 +92,9 @@ const state = {
     logsPageSize: 50,
     logsTotalPages: 1,
     logsTotal: 0,
+    reportRelationItems: [],
+    reportRelationPage: 1,
+    reportRelationPageSize: 10,
 };
 
 // DOM Elements
@@ -170,6 +173,11 @@ const elements = {
     netTaxObligation: document.getElementById('netTaxObligation'),
     vatTimelineChart: document.getElementById('vatTimelineChart'),
     invoiceFlowChart: document.getElementById('invoiceFlowChart'),
+    invoiceRelationTable: document.getElementById('invoiceRelationTable'),
+    exportRelationReportBtn: document.getElementById('exportRelationReportBtn'),
+    prevRelationPage: document.getElementById('prevRelationPage'),
+    nextRelationPage: document.getElementById('nextRelationPage'),
+    relationPageInfo: document.getElementById('relationPageInfo'),
 
     // Logs page elements (continued)
     logFromDate: document.getElementById('logFromDate'),
@@ -332,7 +340,7 @@ function renderChart(data) {
 function showInvoiceEmptyState() {
     elements.invoicesTable.innerHTML = `
         <tr>
-            <td colspan="7" class="empty empty-state">
+            <td colspan="8" class="empty empty-state">
                 <div class="empty-icon">🔍</div>
                 <div class="empty-text">Vui lòng chọn công ty, loại hóa đơn và khoảng thời gian, sau đó nhấn <strong>Lọc</strong> để tìm kiếm.</div>
             </td>
@@ -354,8 +362,11 @@ async function loadCompaniesDropdown() {
 }
 
 async function loadReportCompaniesDropdown() {
-    // Only load if not already loaded
-    if (state.companies.length > 0) return;
+    if (state.companies.length > 0) {
+        elements.reportCompanySelect.innerHTML = '<option value="">-- Chọn công ty --</option>' +
+            state.companies.map(c => `<option value="${c.tax_code}">${c.company_name || c.tax_code}</option>`).join('');
+        return;
+    }
 
     const data = await api('/companies');
     if (data && data.items) {
@@ -363,6 +374,27 @@ async function loadReportCompaniesDropdown() {
         elements.reportCompanySelect.innerHTML = '<option value="">-- Chọn công ty --</option>' +
             data.items.map(c => `<option value="${c.tax_code}">${c.company_name || c.tax_code}</option>`).join('');
     }
+}
+
+const INVOICE_STATUS_LABELS = {
+    1: 'Hóa đơn mới',
+    2: 'Hóa đơn thay thế',
+    3: 'Hóa đơn điều chỉnh',
+    4: 'Hóa đơn bị thay thế',
+    5: 'Hóa đơn bị điều chỉnh',
+    6: 'Hóa đơn bị hủy',
+};
+
+function getStatusBadgeClass(status) {
+    if (status === 2 || status === 3) return 'badge-info';
+    if (status === 4 || status === 5 || status === 6) return 'badge-warning';
+    if (status === 1) return 'badge-success';
+    return 'badge-danger';
+}
+
+function formatInvoiceStatusBadge(status) {
+    const label = INVOICE_STATUS_LABELS[status] || `Trạng thái ${status ?? 'N/A'}`;
+    return `<span class="badge ${getStatusBadgeClass(status)}">${label}</span>`;
 }
 
 function validateInvoiceFilters() {
@@ -452,9 +484,64 @@ async function loadReports() {
         if (vatData) {
             renderVatTimelineChart(vatData.items);
         }
+
+        const relationData = await api(`/reports/invoice-relation-pairs?tax_code=${company}&from_date=${fromDate}&to_date=${toDate}`);
+        if (relationData) {
+            state.reportRelationItems = relationData.items || [];
+            state.reportRelationPage = 1;
+            renderInvoiceRelationPairs(relationData.items || []);
+        } else {
+            state.reportRelationItems = [];
+            state.reportRelationPage = 1;
+            renderInvoiceRelationPairs([]);
+        }
     } finally {
         elements.loadReportBtn.disabled = false;
         elements.loadReportBtn.textContent = originalText;
+    }
+}
+
+function renderInvoiceRelationPairs(items) {
+    if (!elements.invoiceRelationTable) return;
+
+    if (!items || items.length === 0) {
+        elements.invoiceRelationTable.innerHTML = '<tr><td colspan="6" class="empty">Không có cặp hóa đơn điều chỉnh/thay thế trong kỳ</td></tr>';
+        if (elements.relationPageInfo) elements.relationPageInfo.textContent = 'Trang 1 / 1';
+        if (elements.prevRelationPage) elements.prevRelationPage.disabled = true;
+        if (elements.nextRelationPage) elements.nextRelationPage.disabled = true;
+        return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(items.length / state.reportRelationPageSize));
+    if (state.reportRelationPage > totalPages) state.reportRelationPage = totalPages;
+    const start = (state.reportRelationPage - 1) * state.reportRelationPageSize;
+    const pageItems = items.slice(start, start + state.reportRelationPageSize);
+
+    elements.invoiceRelationTable.innerHTML = pageItems.map((item) => `
+        <tr>
+            <td>${item.relation_type_label || '-'}</td>
+            <td>
+                <div><strong>${item.actor_invoice_symbol || ''} - ${item.actor_invoice_number || '-'}</strong></div>
+                <div style="color:var(--text-secondary);font-size:12px;">${item.actor_invoice_date || '-'}</div>
+            </td>
+            <td>
+                <div><strong>${item.base_invoice_symbol || ''} - ${item.base_invoice_number || '-'}</strong></div>
+                <div style="color:var(--text-secondary);font-size:12px;">${item.base_invoice_date || '-'}</div>
+            </td>
+            <td>${item.seller_tax_code || '-'}</td>
+            <td>${item.buyer_tax_code || '-'}</td>
+            <td>${formatCurrency(item.total_amount || 0)}</td>
+        </tr>
+    `).join('');
+
+    if (elements.relationPageInfo) {
+        elements.relationPageInfo.textContent = `Trang ${state.reportRelationPage} / ${totalPages}`;
+    }
+    if (elements.prevRelationPage) {
+        elements.prevRelationPage.disabled = state.reportRelationPage <= 1;
+    }
+    if (elements.nextRelationPage) {
+        elements.nextRelationPage.disabled = state.reportRelationPage >= totalPages;
     }
 }
 
@@ -675,7 +762,7 @@ function getInvoiceFilterParams() {
 async function loadInvoices() {
     if (!validateInvoiceFilters()) return;
 
-    elements.invoicesTable.innerHTML = '<tr><td colspan="7" class="empty">Đang tải...</td></tr>';
+    elements.invoicesTable.innerHTML = '<tr><td colspan="8" class="empty">Đang tải...</td></tr>';
 
     const filterParams = getInvoiceFilterParams();
     let endpoint = `/invoices?page=${state.invoicePage}&size=${state.invoiceSize}&${filterParams}`;
@@ -683,7 +770,7 @@ async function loadInvoices() {
     const data = await api(endpoint);
 
     if (!data) {
-        elements.invoicesTable.innerHTML = '<tr><td colspan="7" class="empty">Lỗi tải dữ liệu</td></tr>';
+        elements.invoicesTable.innerHTML = '<tr><td colspan="8" class="empty">Lỗi tải dữ liệu</td></tr>';
         return;
     }
 
@@ -692,13 +779,14 @@ async function loadInvoices() {
     state.invoicePages = data.pages;
 
     if (data.items.length === 0) {
-        elements.invoicesTable.innerHTML = '<tr><td colspan="7" class="empty">Không có hóa đơn nào phù hợp</td></tr>';
+        elements.invoicesTable.innerHTML = '<tr><td colspan="8" class="empty">Không có hóa đơn nào phù hợp</td></tr>';
     } else {
         elements.invoicesTable.innerHTML = data.items.map(inv => `
             <tr onclick="showInvoiceDetail('${inv.id}')">
                 <td>${formatDate(inv.tdlap)}</td>
                 <td>${inv.shdon || '-'}</td>
                 <td>${inv.khhdon || '-'}</td>
+                <td>${formatInvoiceStatusBadge(inv.tthai)}</td>
                 <td>${inv.nbten || inv.nbmst || '-'}</td>
                 <td>${inv.nmten || '-'}</td>
                 <td>${formatCurrency(inv.tgtcthue)}</td>
@@ -797,6 +885,10 @@ async function showInvoiceDetail(id) {
                 <div class="detail-value">${data.dvtte || 'VND'}</div>
             </div>
             <div class="detail-item">
+                <div class="detail-label">Trạng thái</div>
+                <div class="detail-value">${formatInvoiceStatusBadge(data.tthai)}</div>
+            </div>
+            <div class="detail-item">
                 <div class="detail-label">Người bán</div>
                 <div class="detail-value">${data.nbten || '-'}<br><small>${data.nbmst || ''}</small></div>
             </div>
@@ -811,6 +903,10 @@ async function showInvoiceDetail(id) {
             <div class="detail-item">
                 <div class="detail-label">Tiền thuế</div>
                 <div class="detail-value">${formatCurrency(data.tgtthue)}</div>
+            </div>
+            <div class="detail-item">
+                <div class="detail-label">Liên kết HĐ gốc</div>
+                <div class="detail-value">${data.shdgoc ? `${data.khhdgoc || ''} - ${data.shdgoc}` : '-'}</div>
             </div>
         </div>
         
@@ -1173,6 +1269,56 @@ async function saveSchedule() {
     }
 }
 
+async function exportRelationPairsToCsv() {
+    if (!state.reportRelationItems.length) {
+        alert('Chưa có dữ liệu để xuất. Vui lòng tải báo cáo trước.');
+        return;
+    }
+    const company = elements.reportCompanySelect.value;
+    const fromDate = displayToApi(elements.reportFromDate.value);
+    const toDate = displayToApi(elements.reportToDate.value);
+    const url = `${API_BASE}/reports/invoice-relation-pairs/export?tax_code=${encodeURIComponent(company)}&from_date=${fromDate}&to_date=${toDate}`;
+
+    const oldText = elements.exportRelationReportBtn.textContent;
+    elements.exportRelationReportBtn.disabled = true;
+    elements.exportRelationReportBtn.textContent = '⏳ Đang xuất...';
+    try {
+        const response = await fetch(url, {
+            headers: { ...Auth.getAuthHeader() },
+        });
+        if (response.status === 401) {
+            Auth.logout();
+            return;
+        }
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = 'bao_cao_cap_hoa_don.xlsx';
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename="?([^"]+)"?/);
+            if (match) filename = match[1];
+        }
+
+        const blob = await response.blob();
+        const objectUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(objectUrl);
+        a.remove();
+    } catch (err) {
+        console.error(err);
+        alert('Xuất Excel thất bại');
+    } finally {
+        elements.exportRelationReportBtn.disabled = false;
+        elements.exportRelationReportBtn.textContent = oldText;
+    }
+}
+
 // ========================================
 // Helpers
 // ========================================
@@ -1503,6 +1649,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // Report page events
     if (elements.loadReportBtn) {
         elements.loadReportBtn.addEventListener('click', loadReports);
+    }
+    if (elements.exportRelationReportBtn) {
+        elements.exportRelationReportBtn.addEventListener('click', exportRelationPairsToCsv);
+    }
+    if (elements.prevRelationPage) {
+        elements.prevRelationPage.addEventListener('click', () => {
+            if (state.reportRelationPage > 1) {
+                state.reportRelationPage -= 1;
+                renderInvoiceRelationPairs(state.reportRelationItems);
+            }
+        });
+    }
+    if (elements.nextRelationPage) {
+        elements.nextRelationPage.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil(state.reportRelationItems.length / state.reportRelationPageSize));
+            if (state.reportRelationPage < totalPages) {
+                state.reportRelationPage += 1;
+                renderInvoiceRelationPairs(state.reportRelationItems);
+            }
+        });
     }
 
     // Edit User Modal Events

@@ -8,10 +8,10 @@
     "time": "2026-03-06T16:01:36.058514",
     "message": "current transaction is aborted, commands ignored until end of transaction block\n"
   },
-  "total_invoices_seen": 34474,
+  "total_invoices_seen": 34492,
   "total_invoices_new": 456,
-  "total_detail_success": 18210,
+  "total_detail_success": 18228,
   "total_detail_failed": 585,
-  "last_run_started": "2026-05-25T14:00:00.144268",
-  "last_run_completed": "2026-05-25T14:00:27.159082"
+  "last_run_started": "2026-05-29T07:42:24.055937",
+  "last_run_completed": "2026-05-29T07:42:54.503646"
 }

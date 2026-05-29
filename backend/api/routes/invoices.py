@@ -16,6 +16,7 @@ from backend.api.schemas import (
 from backend.api.auth import get_current_user, UserAuth
 from backend.database.user_repository import UserRepository
 from backend.database.company_repository import CompanyRepository
+from backend.core.date_utils import to_vn_date_str
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -132,7 +133,7 @@ async def list_invoices(
     # Fetch data
     data_sql = f"""
         SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
-               tdlap, nky, tgtcthue, tgtthue, tgtttbso, tthai
+               tdlap, nky, tgtcthue, tgtthue, tgtttbso, tthai, tchat, shdgoc
         FROM invoices
         WHERE {where_clause}
         ORDER BY nky DESC NULLS LAST, tdlap DESC NULLS LAST, shdon DESC NULLS LAST
@@ -254,7 +255,7 @@ async def export_invoices_excel(
             -- Invoice header info (14 columns)
             i.khhdon, i.shdon, i.tdlap, i.dvtte, i.tgia,
             i.nbten, i.nbmst, i.nbdchi, i.nky, i.mhdon, i.ncma,
-            i.nmten, i.nmmst, i.nmdchi,
+            i.nmten, i.nmmst, i.nmdchi, i.nbsdthoai, i.nmsdthoai,
             -- Invoice totals (3 columns)
             i.tgtcthue, i.tgtthue, i.tgtttbso,
             -- Invoice status (3 columns)
@@ -292,12 +293,12 @@ async def export_invoices_excel(
     )
     number_format = '#,##0'
     
-    # Headers (33 columns)
+    # Headers (35 columns)
     headers = [
         # Invoice header (15)
         "STT", "Ký hiệu mẫu số HĐ", "Ký hiệu HĐ", "Số HĐ", "Ngày lập", "ĐVT tiền", "Tỷ giá",
         "Tên NB", "MST NB", "Địa chỉ NB", "Ngày ký", "Mã HĐ", "Ngày cấp mã",
-        "Tên NM", "MST NM", "Địa chỉ NM",
+        "Tên NM", "MST NM", "Địa chỉ NM", "SĐT NB", "SĐT NM",
         # Invoice totals (3)
         "Tiền chưa thuế", "Tiền thuế", "Tổng tiền",
         # Invoice status (2)
@@ -340,8 +341,7 @@ async def export_invoices_excel(
         col += 1
         ws.cell(row=row_idx, column=col, value=data.get('shdon') or '').border = thin_border
         col += 1
-        tdlap = data.get('tdlap')
-        ws.cell(row=row_idx, column=col, value=tdlap[:10] if tdlap else '').border = thin_border
+        ws.cell(row=row_idx, column=col, value=to_vn_date_str(data.get('tdlap'))).border = thin_border
         col += 1
         ws.cell(row=row_idx, column=col, value=data.get('dvtte') or 'VND').border = thin_border
         col += 1
@@ -353,19 +353,21 @@ async def export_invoices_excel(
         col += 1
         ws.cell(row=row_idx, column=col, value=data.get('nbdchi') or '').border = thin_border
         col += 1
-        nky = data.get('nky')
-        ws.cell(row=row_idx, column=col, value=nky[:10] if nky else '').border = thin_border
+        ws.cell(row=row_idx, column=col, value=to_vn_date_str(data.get('nky'))).border = thin_border
         col += 1
         ws.cell(row=row_idx, column=col, value=data.get('mhdon') or '').border = thin_border
         col += 1
-        ncma = data.get('ncma')
-        ws.cell(row=row_idx, column=col, value=ncma[:10] if ncma else '').border = thin_border
+        ws.cell(row=row_idx, column=col, value=to_vn_date_str(data.get('ncma'))).border = thin_border
         col += 1
         ws.cell(row=row_idx, column=col, value=data.get('nmten') or '').border = thin_border
         col += 1
         ws.cell(row=row_idx, column=col, value=data.get('nmmst') or '').border = thin_border
         col += 1
         ws.cell(row=row_idx, column=col, value=data.get('nmdchi') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('nbsdthoai') or '').border = thin_border
+        col += 1
+        ws.cell(row=row_idx, column=col, value=data.get('nmsdthoai') or '').border = thin_border
         col += 1
         
         # Invoice totals (number format) - only on first item
@@ -446,7 +448,7 @@ async def export_invoices_excel(
     column_widths = [
         5, 18, 12, 10, 12, 8, 8,  # STT, Ký hiệu mẫu số HĐ, Ký hiệu HĐ, Số HĐ, Ngày lập, ĐVT tiền, Tỷ giá
         25, 15, 30, 12, 15, 12,  # Tên/MST/ĐC NB, Ngày ký, Mã HĐ, Ngày cấp mã
-        25, 15, 30,  # Tên/MST/ĐC NM
+        25, 15, 30, 14, 14,  # Tên/MST/ĐC NM + SĐT NB/NM
         15, 12, 15,  # Tiền chưa thuế, Tiền thuế, Tổng tiền
         22, 22,  # Trạng thái, Kết quả kiểm tra
         8, 10, 12, 35,  # STT dòng, Tính chất, Mã HHDV, Tên HH
@@ -601,8 +603,8 @@ async def get_invoice(
             # Get invoice header to check company tax codes
             cur.execute("""
                 SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
-                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai,
-                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan
+                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai, tchat, shdgoc,
+                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan, khhdgoc, khmshdgoc, tdlhdgoc
                 FROM invoices
                 WHERE id = %s
             """, (invoice_id,))
@@ -627,8 +629,8 @@ async def get_invoice(
             # Get invoice header
             cur.execute("""
                 SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
-                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai,
-                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan
+                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai, tchat, shdgoc,
+                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan, khhdgoc, khmshdgoc, tdlhdgoc
                 FROM invoices
                 WHERE id = %s
             """, (invoice_id,))
@@ -658,8 +660,8 @@ async def get_invoice(
             # Get invoice header
             cur.execute("""
                 SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, khmshdon,
-                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai,
-                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan
+                       tdlap, tgtcthue, tgtthue, tgtttbso, tthai, tchat, shdgoc,
+                       nbdchi, nmdchi, dvtte, tgtttbchu, htttoan, khhdgoc, khmshdgoc, tdlhdgoc
                 FROM invoices
                 WHERE id = %s
             """, (invoice_id,))

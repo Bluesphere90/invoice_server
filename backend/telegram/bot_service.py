@@ -16,6 +16,7 @@ from backend.database import get_connection, close_connection, init_database
 from backend.database.company_repository import CompanyRepository
 from backend.database.repository import InvoiceRepository
 from backend.collector.job_manager import JobManager, run_collector_job
+from backend.core.date_utils import to_vn_date_str
 from backend.telegram.keyboard import (
     build_company_keyboard,
     build_invoice_type_keyboard,
@@ -609,7 +610,7 @@ Các lệnh có sẵn:
             lines = [f"{type_emoji} <b>HĐ {type_text} - {tax_code}</b> ({days} ngày)\n"]
             
             for i, inv in enumerate(invoices[:30], 1):
-                tdlap = inv.get("tdlap", "")[:10] if inv.get("tdlap") else "N/A"
+                tdlap = to_vn_date_str(inv.get("tdlap")) or "N/A"
                 shdon = inv.get("shdon", "N/A")
                 
                 # Show counterparty - FULL NAME
@@ -663,8 +664,8 @@ Các lệnh có sẵn:
                 6: "Bị hủy",
             }
             
-            tdlap = inv.get("tdlap", "")[:10] if inv.get("tdlap") else "N/A"
-            nky = inv.get("nky", "")[:10] if inv.get("nky") else "N/A"
+            tdlap = to_vn_date_str(inv.get("tdlap")) or "N/A"
+            nky = to_vn_date_str(inv.get("nky")) or "N/A"
             tthai = tthai_map.get(inv.get("tthai"), str(inv.get("tthai", "")))
             
             text = f"""

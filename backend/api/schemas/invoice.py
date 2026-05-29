@@ -37,6 +37,8 @@ class InvoiceSummary(BaseModel):
     tgtthue: Optional[float] = None    # Tổng giá trị thuế
     tgtttbso: Optional[float] = None   # Tổng tiền thanh toán bằng số
     tthai: Optional[int] = None        # Trạng thái
+    tchat: Optional[int] = None        # Tính chất hóa đơn
+    shdgoc: Optional[int] = None       # Số hóa đơn gốc (nếu có)
     
     class Config:
         from_attributes = True
@@ -50,6 +52,9 @@ class InvoiceDetail(InvoiceSummary):
     dvtte: Optional[str] = None        # Đơn vị tiền tệ
     tgtttbchu: Optional[str] = None    # Tổng tiền bằng chữ
     htttoan: Optional[str] = None      # Hình thức thanh toán
+    khhdgoc: Optional[str] = None      # Ký hiệu HĐ gốc
+    khmshdgoc: Optional[str] = None    # Mẫu số HĐ gốc
+    tdlhdgoc: Optional[str] = None     # Ngày lập HĐ gốc
     
     # Items
     items: List[InvoiceItemResponse] = []
