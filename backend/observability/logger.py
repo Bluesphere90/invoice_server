@@ -42,6 +42,12 @@ def configure_root_logger():
     
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
+
+    # httpx includes the complete request URL in its INFO messages. Telegram
+    # Bot API URLs contain the bot token, so keep these third-party loggers at
+    # WARNING while preserving our own explicit operational messages.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     
     if os.getenv("DEBUG", "False").lower() == "true":
         root_logger.setLevel(logging.DEBUG)

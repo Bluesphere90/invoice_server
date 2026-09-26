@@ -104,8 +104,10 @@ class TelegramNotifier:
                     
             except httpx.TimeoutException:
                 logger.warning(f"Telegram timeout (attempt {attempt + 1}/{max_retries})")
-            except httpx.RequestError as e:
-                logger.warning(f"Telegram request error: {e}")
+            except httpx.RequestError as exc:
+                # Request errors can include the Bot API URL, which embeds the
+                # bot token. Keep operational logs useful without exposing it.
+                logger.warning("Telegram request error (%s)", type(exc).__name__)
             
             # Wait before retry (exponential backoff)
             if attempt < max_retries - 1:

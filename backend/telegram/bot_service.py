@@ -84,10 +84,20 @@ class TelegramBotService:
                 if resp.status_code == 200:
                     return resp.json()
                 else:
-                    logger.warning(f"Telegram API error: {resp.status_code} - {resp.text}")
+                    logger.warning(
+                        "Telegram API error on %s: HTTP %s",
+                        endpoint,
+                        resp.status_code,
+                    )
                     return None
-        except Exception as e:
-            logger.error(f"Telegram request error: {e}")
+        except httpx.HTTPError as exc:
+            # Do not log the exception text: it can include the Bot API URL,
+            # whose path contains the bot token.
+            logger.error(
+                "Telegram request failed for %s (%s)",
+                endpoint,
+                type(exc).__name__,
+            )
             return None
     
     async def send_message(
@@ -152,8 +162,8 @@ class TelegramBotService:
                 data = {"chat_id": chat_id, "caption": caption}
                 resp = await client.post(url, files=files, data=data)
                 return resp.json() if resp.status_code == 200 else None
-        except Exception as e:
-            logger.error(f"Send document error: {e}")
+        except httpx.HTTPError as exc:
+            logger.error("Send document failed (%s)", type(exc).__name__)
             return None
     
     # =========================================================================
@@ -162,8 +172,19 @@ class TelegramBotService:
     
     async def start_polling(self):
         """Main polling loop."""
+        # Telegram does not allow getUpdates while a webhook is configured.
+        # This bot is intentionally polling-based; preserve queued updates.
+        webhook_result = await self._request(
+            "POST",
+            "deleteWebhook",
+            json={"drop_pending_updates": False},
+        )
+        if not webhook_result or not webhook_result.get("ok"):
+            logger.error("Could not disable Telegram webhook; polling will not start")
+            return
+
         self.running = True
-        logger.info("Telegram Bot started polling...")
+        logger.info("Telegram webhook disabled; bot started polling...")
         
         while self.running:
             try:
@@ -181,8 +202,8 @@ class TelegramBotService:
             except asyncio.CancelledError:
                 logger.info("Polling cancelled")
                 break
-            except Exception as e:
-                logger.error(f"Polling error: {e}")
+            except Exception as exc:
+                logger.error("Polling error (%s)", type(exc).__name__)
                 await asyncio.sleep(5)
     
     def stop(self):
