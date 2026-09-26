@@ -36,7 +36,7 @@ class LoginService:
         if not cvalue:
             raise RuntimeError("Captcha solving failed")
 
-        logger.info("Captcha solved: %s", cvalue)
+        logger.info("Captcha solved successfully")
 
         # 3. Authenticate
         auth_resp = self.http.authenticate(

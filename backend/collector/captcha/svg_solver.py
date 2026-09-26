@@ -73,7 +73,7 @@ class SvgCaptchaSolver:
                 simplified = self.PATH_REGEX.sub(r'\1', path_data)
 
                 if simplified not in self.PATH_KEYWORDS:
-                    logger.debug("Unknown path pattern: %s", simplified)
+                    logger.debug("Unknown captcha path pattern")
                     continue
 
                 index = self.PATH_KEYWORDS.index(simplified)
@@ -106,5 +106,5 @@ class SvgCaptchaSolver:
 
         captcha = "".join(char for _, char in results)
 
-        logger.info("Solved captcha: %s", captcha)
+        logger.info("Captcha solved successfully")
         return captcha

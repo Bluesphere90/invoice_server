@@ -144,8 +144,10 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
     from backend.database.repository import InvoiceRepository
 
     from backend.database.company_repository import CompanyRepository
+    from backend.database.collector_schedule_repository import CollectorScheduleRepository
     from backend.database.item_repository import InvoiceItemRepository
     from backend.collector.http import HoaDonHttpClient, LoginService, ProfileService
+    from backend.collector.http.client import GdtAuthenticationBlockedError
     from backend.collector.captcha import SvgCaptchaSolver
     from backend.collector.invoice import InvoiceListService, InvoiceDetailWorker
     
@@ -267,6 +269,18 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
         logger.info(f"Job {job_id}: Completed. Processed {processed}/{total} invoices")
         
     except Exception as e:
+        if isinstance(e, GdtAuthenticationBlockedError):
+            try:
+                CollectorScheduleRepository(get_connection()).disable_for_auth_block()
+                notifier.send_error_alert(
+                    error_type="GDT authentication blocked",
+                    message_text=(
+                        "GDT returned a 403 behavior block during the controlled run; "
+                        f"{e}. Automatic collector runs have been disabled."
+                    ),
+                )
+            except Exception:
+                logger.exception("Failed to disable collector schedule after GDT authentication block")
         logger.exception(f"Job {job_id}: Failed with error: {e}")
         manager.update_job(
             job_id,

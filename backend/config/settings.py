@@ -25,6 +25,12 @@ class Settings:
 
     # Collector
     COLLECTOR_INTERVAL_HOURS: int = int(os.getenv("COLLECTOR_INTERVAL_HOURS", "6"))
+    HDDT_REQUEST_DELAY_MS: int = int(os.getenv("HDDT_REQUEST_DELAY_MS", "600"))
+    HDDT_BROWSER_USER_AGENT: str = os.getenv(
+        "HDDT_BROWSER_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
+    )
 
     # API Server
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")

@@ -3,6 +3,7 @@ import time
 from typing import Dict, Any
 
 from backend.collector.invoice.detail_endpoints import build_invoice_detail_url
+from backend.collector.http.client import GdtAuthenticationBlockedError
 from backend.observability.logger import get_logger
 
 logger = get_logger(__name__)
@@ -46,7 +47,12 @@ class InvoiceDetailWorker:
             try:
                 logger.info("Fetch detail %s (try %s)", invoice_id, retry)
 
-                resp = self.http.session.get(url, timeout=30)
+                resp = self.http.request(
+                    "GET",
+                    url,
+                    timeout=30,
+                    request_profile="detail",
+                )
 
                 # -------- SUCCESS --------
                 if resp.status_code == 200:
@@ -76,6 +82,8 @@ class InvoiceDetailWorker:
                 self._fail(invoice_id)
                 raise Exception(f"HTTP {resp.status_code} error fetching detail")
 
+            except GdtAuthenticationBlockedError:
+                raise
             except Exception as exc:
                 logger.exception(
                     "Exception fetching detail %s: %s",

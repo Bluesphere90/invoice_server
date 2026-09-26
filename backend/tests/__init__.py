@@ -1,0 +1,1 @@
+"""Collector protocol test package."""

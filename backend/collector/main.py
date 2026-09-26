@@ -15,7 +15,9 @@ from backend.database import get_connection, init_database, close_connection
 from backend.database.repository import InvoiceRepository
 from backend.database.item_repository import InvoiceItemRepository
 from backend.database.company_repository import CompanyRepository
+from backend.database.collector_schedule_repository import CollectorScheduleRepository
 from backend.collector.http import HoaDonHttpClient, LoginService, ProfileService
+from backend.collector.http.client import GdtAuthenticationBlockedError
 from backend.collector.captcha import SvgCaptchaSolver
 from backend.collector.invoice import InvoiceListService, InvoiceDetailWorker
 from backend.observability import HealthRecorder
@@ -64,8 +66,10 @@ def collect_for_company(
         "invoices_detected": 0,
         "invoices_downloaded": 0,
         "download_failed": 0,
+        "list_responses": 0,
         "error": None,
         "error_details": [],
+        "auth_blocked": False,
     }
     
     # Create new HTTP client for this company
@@ -110,6 +114,7 @@ def collect_for_company(
             to_date=to_date,
             is_purchase=False
         )
+        result["list_responses"] = list_service.successful_response_count
         logger.info(f"Found {len(sold_ids)} sold invoices for {tax_code}")
         health.inc("total_invoices_seen", len(sold_ids))
         
@@ -136,6 +141,11 @@ def collect_for_company(
         
         return result
         
+    except GdtAuthenticationBlockedError as e:
+        logger.error("GDT authentication behavior block for %s", tax_code)
+        result["auth_blocked"] = True
+        result["error"] = str(e)
+        return result
     except Exception as e:
         logger.exception(f"Failed to collect for {tax_code}: {e}")
         result["error"] = str(e)
@@ -187,6 +197,12 @@ def run_collector():
         invoice_repo = InvoiceRepository(conn)
         item_repo = InvoiceItemRepository(conn)
         company_repo = CompanyRepository(conn)
+        schedule_repo = CollectorScheduleRepository(conn)
+
+        if not schedule_repo.is_active():
+            logger.warning("Collector schedule is disabled; skipping outbound GDT requests")
+            health.mark("last_run_completed")
+            return
         
         # Get all active companies
         companies = company_repo.get_active_companies()
@@ -243,6 +259,18 @@ def run_collector():
             
             # Update company sync status
             company_repo.update_last_sync(company['tax_code'], result.get("error"))
+
+            if result.get("auth_blocked"):
+                schedule_repo.disable_for_auth_block()
+                notifier.send_error_alert(
+                    error_type="GDT authentication blocked",
+                    message_text=(
+                        "GDT returned a 403 behavior block after the protocol update; "
+                        f"{result['error']}. Automatic collector runs have been disabled."
+                    ),
+                )
+                logger.error("Collector schedule disabled after GDT authentication block")
+                break
 
         health.mark("last_run_completed")
         

@@ -49,6 +49,7 @@ class InvoiceListService:
         """
         self.http = http_client
         self.repo = invoice_repo
+        self.successful_response_count = 0
 
     # ------------------------------------------------------------------
     # PUBLIC API
@@ -168,7 +169,12 @@ class InvoiceListService:
         for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
             try:
                 logger.debug("GET %s (attempt %d/%d)", url, attempt, MAX_RETRY_ATTEMPTS)
-                resp = self.http.session.get(url, timeout=30)
+                resp = self.http.request(
+                    "GET",
+                    url,
+                    timeout=30,
+                    request_profile="lookup",
+                )
                 
                 if resp.status_code == 429:
                     # Rate limited - wait and retry
@@ -202,7 +208,9 @@ class InvoiceListService:
                     continue
                 
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                self.successful_response_count += 1
+                return data
                 
             except requests.exceptions.Timeout:
                 wait_time = backoff + random.uniform(0, 2)
