@@ -1336,7 +1336,7 @@ function formatDate(dateStr) {
     if (!dateStr) return '-';
     try {
         const d = new Date(dateStr);
-        return d.toLocaleDateString('vi-VN');
+        return d.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
     } catch {
         return dateStr.substring(0, 10);
     }

@@ -16,7 +16,7 @@ from backend.api.schemas import (
 from backend.api.auth import get_current_user, UserAuth
 from backend.database.user_repository import UserRepository
 from backend.database.company_repository import CompanyRepository
-from backend.core.date_utils import to_vn_date_str
+from backend.core.date_utils import to_vn_date_str, vn_date_sql, build_vn_date_filter
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -25,19 +25,9 @@ def build_invoice_where_clause(from_date, to_date, tax_code, buyer_tax_code, sea
     """Build WHERE clause and params for invoice queries.
     
     Date range filtering uses nky (ngày ký - signing date) with fallback to
-    tdlap (ngày lập) when nky is NULL: COALESCE(nky, tdlap).
-    Both columns are TEXT stored as ISO8601 strings (YYYY-MM-DD...).
+    tdlap (ngày lập) when nky is absent, interpreted in Vietnam time.
     """
-    conditions = []
-    params = []
-    
-    if from_date:
-        conditions.append("COALESCE(nky, tdlap) >= %s")
-        params.append(from_date.isoformat())
-        
-    if to_date:
-        conditions.append("COALESCE(nky, tdlap) <= %s")
-        params.append(to_date.isoformat() + "T23:59:59")
+    conditions, params = build_vn_date_filter(from_date, to_date, "nky", "tdlap")
         
     if tax_code:
         conditions.append("nbmst = %s")
@@ -492,17 +482,8 @@ async def get_stats(
     user_repo = UserRepository(conn)
     company_repo = CompanyRepository(conn)
     
-    # Build date filter using COALESCE(nky, tdlap):
-    # - nky (ngày ký) is preferred; falls back to tdlap (ngày lập) when nky IS NULL
-    conditions = []
-    params = []
-
-    if from_date:
-        conditions.append("COALESCE(nky, tdlap) >= %s")
-        params.append(from_date.isoformat())
-    if to_date:
-        conditions.append("COALESCE(nky, tdlap) <= %s")
-        params.append(to_date.isoformat() + "T23:59:59")
+    # Preserve signing-date preference, with Vietnam calendar boundaries.
+    conditions, params = build_vn_date_filter(from_date, to_date, "nky", "tdlap")
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -551,10 +532,10 @@ async def get_stats(
         total_amount = float(row['total_amount']) if row['total_amount'] else 0.0
         total_tax = float(row['total_tax']) if row['total_tax'] else 0.0
 
-        # Invoices by month (extract year-month from tdlap string)
+        # Issuance month must use the Vietnam date, not the UTC string prefix.
         cur.execute(f"""
             SELECT
-                SUBSTRING(tdlap FROM 1 FOR 7) as month,
+                TO_CHAR({vn_date_sql('tdlap')}, 'YYYY-MM') as month,
                 COUNT(*) as cnt
             FROM invoices
             WHERE tdlap IS NOT NULL AND {where_clause}

@@ -9,7 +9,7 @@ import io
 from backend.database import get_db
 from backend.api.auth import get_current_user, UserAuth
 from backend.database.user_repository import UserRepository
-from backend.core.date_utils import to_vn_date_str
+from backend.core.date_utils import to_vn_date_str, build_vn_date_filter
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -113,14 +113,7 @@ def _fetch_relation_pairs(
     if from_date > to_date:
         raise HTTPException(status_code=400, detail="from_date must be <= to_date")
 
-    date_from = from_date.isoformat()
-    date_to = to_date.isoformat() + "T23:59:59"
-
-    conditions = []
-    params = []
-
-    conditions.append("(COALESCE(d.nky, d.tdlap) BETWEEN %s AND %s)")
-    params.extend([date_from, date_to])
+    conditions, params = build_vn_date_filter(from_date, to_date, "d.nky", "d.tdlap")
 
     company_clause, company_params = build_company_restriction_clause(
         current_user.id, current_user.role, conn, "d.nbmst", "d.nmmst"
@@ -323,15 +316,7 @@ async def get_invoice_flow_report(
     Incoming invoices (purchases) have positive amounts, outgoing invoices (sales) have negative amounts.
     """
     # Build base query conditions
-    conditions = []
-    params = []
-
-    if from_date:
-        conditions.append("tdlap >= %s")
-        params.append(from_date.isoformat())
-    if to_date:
-        conditions.append("tdlap <= %s")
-        params.append(to_date.isoformat() + "T23:59:59")
+    conditions, params = build_vn_date_filter(from_date, to_date, "tdlap")
     
     # For non-admin users, restrict access to assigned companies
     company_clause, company_params = build_company_restriction_clause(
@@ -440,15 +425,7 @@ async def get_vat_timeline_report(
     Get VAT tax timeline showing incoming vs outgoing taxes over time.
     """
     # Build base query conditions
-    conditions = []
-    params = []
-
-    if from_date:
-        conditions.append("tdlap >= %s")
-        params.append(from_date.isoformat())
-    if to_date:
-        conditions.append("tdlap <= %s")
-        params.append(to_date.isoformat() + "T23:59:59")
+    conditions, params = build_vn_date_filter(from_date, to_date, "tdlap")
     
     # For non-admin users, restrict access to assigned companies
     company_clause, company_params = build_company_restriction_clause(

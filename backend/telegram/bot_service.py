@@ -7,7 +7,7 @@ and collector control.
 import asyncio
 import httpx
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional, Dict, Any, List, Callable
 
 from backend.config import settings
@@ -16,7 +16,7 @@ from backend.database import get_connection, close_connection, init_database
 from backend.database.company_repository import CompanyRepository
 from backend.database.repository import InvoiceRepository
 from backend.collector.job_manager import JobManager, run_collector_job
-from backend.core.date_utils import to_vn_date_str
+from backend.core.date_utils import VN_TZ, to_vn_date_str, vn_date_sql, build_vn_date_filter
 from backend.telegram.keyboard import (
     build_company_keyboard,
     build_invoice_type_keyboard,
@@ -344,9 +344,9 @@ Các lệnh có sẵn:
                 total_companies = cur.fetchone()["cnt"]
                 
                 # Invoices today
-                today = date.today().isoformat()
+                today = datetime.now(VN_TZ).date()
                 cur.execute(
-                    "SELECT COUNT(*) as cnt FROM invoices WHERE tdlap >= %s",
+                    f"SELECT COUNT(*) as cnt FROM invoices WHERE {vn_date_sql('tdlap')} = %s",
                     (today,)
                 )
                 today_inv = cur.fetchone()["cnt"]
@@ -565,7 +565,7 @@ Các lệnh có sẵn:
             init_database()
             conn = get_connection()
             
-            to_date = date.today()
+            to_date = datetime.now(VN_TZ).date()
             from_date = to_date - timedelta(days=days)
             
             # Build query based on invoice type
@@ -576,12 +576,14 @@ Các lệnh có sẵn:
                 # Sold invoices: seller is tax_code  
                 condition = "nbmst = %s"
             
+            date_conditions, date_params = build_vn_date_filter(from_date, to_date, "tdlap")
+            date_clause = " AND ".join(date_conditions)
             sql = f"""
                 SELECT id, nbmst, nbten, nmmst, nmten, shdon, khhdon, tdlap,
                        tgtcthue, tgtthue, tgtttbso
                 FROM invoices
                 WHERE {condition}
-                  AND tdlap >= %s AND tdlap <= %s
+                  AND {date_clause}
                 ORDER BY tdlap DESC, shdon DESC
                 LIMIT 30
             """
@@ -589,8 +591,8 @@ Các lệnh có sẵn:
             
             with conn.cursor() as cur:
                 # First check count
-                count_sql = f"SELECT COUNT(*) as cnt FROM invoices WHERE {condition} AND tdlap >= %s AND tdlap <= %s"
-                cur.execute(count_sql, (tax_code, from_date.isoformat(), to_date.isoformat() + "T23:59:59"))
+                count_sql = f"SELECT COUNT(*) as cnt FROM invoices WHERE {condition} AND {date_clause}"
+                cur.execute(count_sql, [tax_code] + date_params)
                 total_count = cur.fetchone()["cnt"]
                 
                 if total_count > 30:
@@ -601,7 +603,7 @@ Các lệnh có sẵn:
                     )
                     return
 
-                cur.execute(sql, (tax_code, from_date.isoformat(), to_date.isoformat() + "T23:59:59"))
+                cur.execute(sql, [tax_code] + date_params)
                 rows = cur.fetchall()
             
             invoices = [dict(r) for r in rows] if rows else []
