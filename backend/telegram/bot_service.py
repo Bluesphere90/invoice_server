@@ -50,6 +50,7 @@ class TelegramBotService:
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.offset = 0
         self.running = False
+        self._polling_stop = asyncio.Event()
         
         # Session cache for multi-step flows
         # Format: {chat_id: {"invoices": [...], "context": {...}}}
@@ -71,7 +72,9 @@ class TelegramBotService:
     # HTTP Helpers
     # =========================================================================
     
-    async def _request(self, method: str, endpoint: str, **kwargs) -> Optional[Dict]:
+    async def _request(
+        self, method: str, endpoint: str, *, log_errors: bool = True, **kwargs
+    ) -> Optional[Dict]:
         """Make HTTP request to Telegram API."""
         url = f"{self.base_url}/{endpoint}"
         try:
@@ -84,20 +87,34 @@ class TelegramBotService:
                 if resp.status_code == 200:
                     return resp.json()
                 else:
-                    logger.warning(
-                        "Telegram API error on %s: HTTP %s",
-                        endpoint,
-                        resp.status_code,
-                    )
+                    if log_errors:
+                        logger.warning(
+                            "Telegram API error on %s: HTTP %s",
+                            endpoint,
+                            resp.status_code,
+                        )
+                    else:
+                        # Preserve Telegram's retry_after for polling retries.
+                        try:
+                            payload = resp.json()
+                        except ValueError:
+                            return None
+                        if isinstance(payload, dict):
+                            return {
+                                "ok": False,
+                                "error_code": resp.status_code,
+                                "parameters": payload.get("parameters"),
+                            }
                     return None
         except httpx.HTTPError as exc:
             # Do not log the exception text: it can include the Bot API URL,
             # whose path contains the bot token.
-            logger.error(
-                "Telegram request failed for %s (%s)",
-                endpoint,
-                type(exc).__name__,
-            )
+            if log_errors:
+                logger.error(
+                    "Telegram request failed for %s (%s)",
+                    endpoint,
+                    type(exc).__name__,
+                )
             return None
     
     async def send_message(
@@ -170,46 +187,101 @@ class TelegramBotService:
     # Polling
     # =========================================================================
     
-    async def start_polling(self):
-        """Main polling loop."""
-        # Telegram does not allow getUpdates while a webhook is configured.
-        # This bot is intentionally polling-based; preserve queued updates.
-        webhook_result = await self._request(
-            "POST",
-            "deleteWebhook",
-            json={"drop_pending_updates": False},
-        )
-        if not webhook_result or not webhook_result.get("ok"):
-            logger.error("Could not disable Telegram webhook; polling will not start")
-            return
+    async def _wait_for_poll_retry(self, delay: float):
+        """Wait without blocking the event loop; stop() interrupts the wait."""
+        try:
+            await asyncio.wait_for(self._polling_stop.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            pass
 
+    async def start_polling(self):
+        """Long-poll with bounded backoff when the network or API fails."""
         self.running = True
-        logger.info("Telegram webhook disabled; bot started polling...")
-        
-        while self.running:
-            try:
-                result = await self._request("GET", "getUpdates", params={
-                    "offset": self.offset,
-                    "timeout": 30,
-                    "allowed_updates": ["message", "callback_query"]
-                })
-                
-                if result and result.get("ok") and result.get("result"):
-                    for update in result["result"]:
+        self._polling_stop.clear()
+        retry_delay = 5
+        failures = 0
+        last_error_logged_at = None
+        webhook_ready = False
+
+        def recovered():
+            nonlocal retry_delay, failures, last_error_logged_at
+            if failures:
+                logger.info("Telegram connection recovered after %s failures", failures)
+            retry_delay = 5
+            failures = 0
+            last_error_logged_at = None
+
+        async def retry(endpoint, result=None, error_name="RequestError"):
+            nonlocal retry_delay, failures, last_error_logged_at
+            failures += 1
+            delay = retry_delay
+            parameters = result.get("parameters") if isinstance(result, dict) else None
+            retry_after = parameters.get("retry_after") if isinstance(parameters, dict) else None
+            if isinstance(retry_after, int) and not isinstance(retry_after, bool) and retry_after > 0:
+                # A server-specified rate limit can exceed the normal 60s cap.
+                delay = max(delay, retry_after)
+            now = asyncio.get_running_loop().time()
+            if last_error_logged_at is None or now - last_error_logged_at >= 60:
+                logger.warning(
+                    "Telegram %s failed (%s); retry in %ss (consecutive failures: %s)",
+                    endpoint, error_name, delay, failures,
+                )
+                last_error_logged_at = now
+            retry_delay = min(retry_delay * 2, 60)
+            await self._wait_for_poll_retry(delay)
+
+        try:
+            while self.running:
+                try:
+                    if not webhook_ready:
+                        # Preserve queued updates, including after an offline start.
+                        result = await self._request(
+                            "POST", "deleteWebhook", log_errors=False,
+                            json={"drop_pending_updates": False},
+                        )
+                        if not self.running:
+                            break
+                        if not isinstance(result, dict) or not result.get("ok"):
+                            await retry("deleteWebhook", result)
+                            continue
+                        recovered()
+                        webhook_ready = True
+                        logger.info("Telegram webhook disabled; bot started polling...")
+
+                    result = await self._request(
+                        "GET", "getUpdates", log_errors=False,
+                        params={
+                            "offset": self.offset,
+                            "timeout": 30,
+                            "allowed_updates": ["message", "callback_query"],
+                        },
+                    )
+                    if not self.running:
+                        break
+                    if not isinstance(result, dict) or not result.get("ok"):
+                        await retry("getUpdates", result)
+                        continue
+                    recovered()
+                    for update in result.get("result") or []:
                         self.offset = update["update_id"] + 1
                         await self.handle_update(update)
-                        
-            except asyncio.CancelledError:
-                logger.info("Polling cancelled")
-                break
-            except Exception as exc:
-                logger.error("Polling error (%s)", type(exc).__name__)
-                await asyncio.sleep(5)
-    
+                except asyncio.CancelledError:
+                    logger.info("Polling cancelled")
+                    break
+                except Exception as exc:
+                    await retry(
+                        "getUpdates" if webhook_ready else "deleteWebhook",
+                        error_name=type(exc).__name__,
+                    )
+        finally:
+            self.running = False
+            self._polling_stop.set()
+
     def stop(self):
-        """Stop polling."""
+        """Stop polling and wake any pending retry wait."""
         self.running = False
-    
+        self._polling_stop.set()
+
     # =========================================================================
     # Update Handler
     # =========================================================================
