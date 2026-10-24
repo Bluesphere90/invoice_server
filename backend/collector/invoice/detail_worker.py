@@ -3,7 +3,7 @@ import time
 from typing import Dict, Any
 
 from backend.collector.invoice.detail_endpoints import build_invoice_detail_url
-from backend.collector.http.client import GdtAuthenticationBlockedError
+from backend.collector.http.client import GdtAuthenticationBlockedError, GdtRequestError
 from backend.observability.logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,8 +16,6 @@ class InvoiceDetailWorker:
       - GetInvoiceDetailsAsync (C#)
       - Retry + DetailStatus logic
     """
-
-    MAX_RETRIES = 10
 
     def __init__(self, http_client, invoice_repo, item_repo):
         """
@@ -42,59 +40,24 @@ class InvoiceDetailWorker:
 
         url = build_invoice_detail_url(identifier)
 
-        retry = 0
-        while retry <= self.MAX_RETRIES:
-            try:
-                logger.info("Fetch detail %s (try %s)", invoice_id, retry)
-
-                resp = self.http.request(
-                    "GET",
-                    url,
-                    timeout=30,
-                    request_profile="detail",
-                )
-
-                # -------- SUCCESS --------
-                if resp.status_code == 200:
-                    data = resp.json()
-                    self._save_invoice_detail(invoice_id, data)
-                    self.invoice_repo.update_detail_status(
-                        invoice_id, status=1
-                    )
-                    logger.info("Detail OK %s", invoice_id)
-                    # Rate limit protection: wait 1.5s between requests
-                    # Based on testing: 0s=77% (conn errors), 1s=60%, 1.5s=87%
-                    time.sleep(1.5)
-                    return True
-
-                # -------- RATE LIMIT --------
-                if resp.status_code == 429:
-                    retry += 1
-                    self._backoff(retry)
-                    continue
-
-                # -------- OTHER HTTP ERROR --------
-                logger.error(
-                    "Detail HTTP error %s %s",
-                    resp.status_code,
-                    invoice_id,
-                )
-                self._fail(invoice_id)
-                raise Exception(f"HTTP {resp.status_code} error fetching detail")
-
-            except GdtAuthenticationBlockedError:
-                raise
-            except Exception as exc:
-                logger.exception(
-                    "Exception fetching detail %s: %s",
-                    invoice_id,
-                    exc,
-                )
-                retry += 1
-                if retry > self.MAX_RETRIES:
-                    self._fail(invoice_id)
-                    raise exc
-                self._backoff(retry)
+        try:
+            logger.info("Fetch detail %s", invoice_id)
+            resp = self.http.request(
+                "GET", url, timeout=30, request_profile="detail", response_kind="detail",
+            )
+            data = resp.json()
+            if data.get("id") != invoice_id:
+                raise GdtRequestError("GDT detail: returned invoice id does not match the requested invoice")
+            self._save_invoice_detail(invoice_id, data)
+            self.invoice_repo.update_detail_status(invoice_id, status=1)
+            logger.info("Detail OK %s", invoice_id)
+            time.sleep(1.5)
+            return True
+        except GdtAuthenticationBlockedError:
+            raise
+        except Exception:
+            self._fail(invoice_id)
+            raise
 
     # =====================================================
     # INTERNAL
@@ -219,11 +182,3 @@ class InvoiceDetailWorker:
             increment_retry=True,
         )
         logger.error("Detail FAILED %s", invoice_id)
-
-    @staticmethod
-    def _backoff(retry: int):
-        """
-        Exponential backoff (nhẹ).
-        """
-        sleep_sec = min(2 ** retry, 60)
-        time.sleep(sleep_sec)

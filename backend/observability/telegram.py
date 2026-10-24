@@ -5,6 +5,7 @@ Gửi thông báo qua Telegram Bot API để quản lý server từ xa.
 """
 import httpx
 import time
+from html import escape
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -177,14 +178,19 @@ class TelegramNotifier:
         
         # Calculate aggregates
         total_companies = len(company_results)
-        login_success = sum(1 for r in company_results if r.get("login_success", False))
-        login_failed = total_companies - login_success
+        def company_ok(result):
+            return (bool(result.get("collection_success", result.get("login_success", False)))
+                    and not result.get("error") and not result.get("download_failed", 0)
+                    and not result.get("error_details"))
+
+        success_count = sum(1 for result in company_results if company_ok(result))
+        failed_count = total_companies - success_count
         total_detected = sum(r.get("invoices_detected", 0) for r in company_results)
         total_downloaded = sum(r.get("invoices_downloaded", 0) for r in company_results)
         total_failed = sum(r.get("download_failed", 0) for r in company_results)
         
         # Determine status
-        has_errors = login_failed > 0 or total_failed > 0
+        has_errors = failed_count > 0
         status_emoji = "✅" if not has_errors else "⚠️"
         status_text = "Thành công" if not has_errors else "Có lỗi"
 
@@ -207,21 +213,19 @@ class TelegramNotifier:
             else:
                 display_name = tax_code
 
-            login_ok = r.get("login_success", False)
+            display_name = escape(display_name)
             detected = r.get("invoices_detected", 0)
             downloaded = r.get("invoices_downloaded", 0)
-            
-            login_icon = "✅" if login_ok else "❌"
-            
-            if login_ok:
-                if detected == downloaded:
-                    line = f"• {display_name}: {login_icon} | {detected} phát hiện, {downloaded} tải"
-                else:
-                    line = f"• {display_name}: {login_icon} | {detected} phát hiện, {downloaded} tải ⚠️"
+            if company_ok(r):
+                line = f"• {display_name}: ✅ | {detected} phát hiện, {downloaded} tải"
             else:
-                error_short = (r.get("error", "Lỗi") or "Lỗi không xác định")[:40]
-                line = f"• {display_name}: {login_icon} | {error_short}"
-            
+                error_short = escape(str(r.get("error") or "Phiên chưa hoàn tất hoặc tải chi tiết bị lỗi")[:160])
+                line = f"• {display_name}: ❌ | {error_short}"
+                if r.get("list_complete") or r.get("list_responses", 0):
+                    line += f" | {detected} phát hiện, {downloaded} tải"
+                    if not r.get("list_complete"):
+                        line += " (chưa đủ phạm vi tra cứu)"
+
             company_lines.append(line)
         
         companies_detail = "\n".join(company_lines)
@@ -238,7 +242,7 @@ class TelegramNotifier:
 {companies_detail}
 
 📈 <b>Tổng kết:</b>
-• Companies: {total_companies} ({login_success} OK, {login_failed} lỗi)
+• Companies: {total_companies} ({success_count} OK, {failed_count} lỗi)
 • Invoices: {total_detected} phát hiện, {total_downloaded} tải về
         """.strip()
         
@@ -246,9 +250,9 @@ class TelegramNotifier:
         all_errors = []
         for r in company_results:
             if r.get("error"):
-                all_errors.append(f"• {r['tax_code']}: {r['error'][:60]}")
+                all_errors.append(f"• {escape(str(r['tax_code']))}: {escape(str(r['error'])[:220])}")
             for detail in r.get("error_details", []):
-                all_errors.append(f"  └ {detail}")
+                all_errors.append(f"  └ {escape(str(detail))}")
         
         if all_errors:
             error_section = "\n".join(all_errors[:10])  # Limit to 10 lines

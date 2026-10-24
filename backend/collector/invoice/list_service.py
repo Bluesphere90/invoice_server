@@ -1,22 +1,16 @@
 import logging
-import time
-import random
 from datetime import date, datetime, timedelta
 from typing import List, Tuple, Optional
 from urllib.parse import urlencode, urlparse, parse_qs
 
-import requests
 
 from backend.collector.invoice.types import InvoiceIdentifier
 from backend.collector.http.endpoints import BASE_URL
+from backend.collector.http.client import GdtRequestError, HoaDonHttpClient
+from backend.config import settings
 from backend.observability.logger import get_logger
 
 logger = get_logger(__name__)
-
-# Retry configuration
-MAX_RETRY_ATTEMPTS = 5
-INITIAL_BACKOFF_SECONDS = 2
-MAX_BACKOFF_SECONDS = 120  # 2 minutes max wait
 
 # These fields can change after invoice issuance (e.g. replaced/adjusted/cancelled).
 # We always refresh them from list API even when invoice already exists locally.
@@ -50,6 +44,8 @@ class InvoiceListService:
         self.http = http_client
         self.repo = invoice_repo
         self.successful_response_count = 0
+        self.failed_ranges = []
+        self._unavailable_paths = {}
 
     # ------------------------------------------------------------------
     # PUBLIC API
@@ -62,6 +58,7 @@ class InvoiceListService:
         to_date: date,
         is_purchase: bool,
         ignore_saved: bool = True,
+        allow_partial: bool = False,
     ) -> List[InvoiceIdentifier]:
         """
         Main entrypoint.
@@ -89,21 +86,24 @@ class InvoiceListService:
                     is_sco=False,
                     ignore_saved=ignore_saved,
                     seen_ids=seen_ids,
+                    allow_partial=allow_partial,
                 )
             )
 
-            # 2️⃣ sco-query/*
-            identifiers.extend(
-                self._fetch_one_period(
-                    tax_code,
-                    start,
-                    end,
-                    is_purchase,
-                    is_sco=True,
-                    ignore_saved=ignore_saved,
-                    seen_ids=seen_ids,
+            # GDT limits cash-register searches to 10 inclusive dates.
+            for sco_start, sco_end in self._split_sco_periods(start, end):
+                identifiers.extend(
+                    self._fetch_one_period(
+                        tax_code,
+                        sco_start,
+                        sco_end,
+                        is_purchase,
+                        is_sco=True,
+                        ignore_saved=ignore_saved,
+                        seen_ids=seen_ids,
+                        allow_partial=allow_partial,
+                    )
                 )
-            )
 
         logger.info("Total invoice identifiers collected: %d", len(identifiers))
         return identifiers
@@ -121,6 +121,7 @@ class InvoiceListService:
         is_sco: bool,
         ignore_saved: bool,
         seen_ids: set,
+        allow_partial: bool = False,
     ) -> List[InvoiceIdentifier]:
 
         base_path = self._build_base_path(is_purchase, is_sco)
@@ -137,10 +138,29 @@ class InvoiceListService:
         url = f"{BASE_URL}{base_path}?{urlencode(params)}"
         results: List[InvoiceIdentifier] = []
 
+        def record_failure(message):
+            failure = {
+                "api": base_path,
+                "direction": "purchase" if is_purchase else "sold",
+                "from_date": start.isoformat(),
+                "to_date": end.isoformat(),
+                "error": message,
+            }
+            self.failed_ranges.append(failure)
+            logger.warning("Incomplete invoice range: %s", failure)
+
+        if allow_partial and base_path in self._unavailable_paths:
+            record_failure("Endpoint already failed this run: " + self._unavailable_paths[base_path])
+            return results
+
         while url:
-            data = self._fetch_with_retry(url)
-            if data is None:
-                logger.error("Stop pagination: Failed for url %s", url)
+            try:
+                data = self._fetch_with_retry(url)
+            except GdtRequestError as exc:
+                if not allow_partial:
+                    raise
+                self._unavailable_paths[base_path] = str(exc)
+                record_failure(str(exc))
                 break
 
             invoices = data.get("datas") or []
@@ -159,84 +179,17 @@ class InvoiceListService:
 
         return results
 
-    def _fetch_with_retry(self, url: str) -> Optional[dict]:
-        """
-        Fetch URL with exponential backoff retry for rate limiting (429) 
-        and transient errors (5xx).
-        """
-        backoff = INITIAL_BACKOFF_SECONDS
-        
-        for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
-            try:
-                logger.debug("GET %s (attempt %d/%d)", url, attempt, MAX_RETRY_ATTEMPTS)
-                resp = self.http.request(
-                    "GET",
-                    url,
-                    timeout=30,
-                    request_profile="lookup",
-                )
-                
-                if resp.status_code == 429:
-                    # Rate limited - wait and retry
-                    retry_after = resp.headers.get('Retry-After')
-                    if retry_after:
-                        wait_time = int(retry_after)
-                    else:
-                        wait_time = backoff
-                    
-                    # Add jitter to prevent thundering herd
-                    wait_time += random.uniform(0, 2)
-                    wait_time = min(wait_time, MAX_BACKOFF_SECONDS)
-                    
-                    logger.warning(
-                        "Rate limited (429). Waiting %.1f seconds before retry %d/%d",
-                        wait_time, attempt, MAX_RETRY_ATTEMPTS
-                    )
-                    time.sleep(wait_time)
-                    backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
-                    continue
-                
-                if resp.status_code >= 500:
-                    # Server error - wait and retry
-                    wait_time = backoff + random.uniform(0, 2)
-                    logger.warning(
-                        "Server error (%d). Waiting %.1f seconds before retry %d/%d",
-                        resp.status_code, wait_time, attempt, MAX_RETRY_ATTEMPTS
-                    )
-                    time.sleep(wait_time)
-                    backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
-                    continue
-                
-                resp.raise_for_status()
-                data = resp.json()
-                self.successful_response_count += 1
-                return data
-                
-            except requests.exceptions.Timeout:
-                wait_time = backoff + random.uniform(0, 2)
-                logger.warning(
-                    "Request timeout. Waiting %.1f seconds before retry %d/%d",
-                    wait_time, attempt, MAX_RETRY_ATTEMPTS
-                )
-                time.sleep(wait_time)
-                backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
-                
-            except requests.exceptions.ConnectionError as e:
-                wait_time = backoff + random.uniform(0, 2)
-                logger.warning(
-                    "Connection error: %s. Waiting %.1f seconds before retry %d/%d",
-                    str(e), wait_time, attempt, MAX_RETRY_ATTEMPTS
-                )
-                time.sleep(wait_time)
-                backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
-                
-            except requests.exceptions.RequestException as e:
-                logger.error("Request failed: %s", str(e))
-                raise
-        
-        logger.error("Max retry attempts (%d) exceeded for URL: %s", MAX_RETRY_ATTEMPTS, url)
-        return None
-
+    def _fetch_with_retry(self, url: str) -> dict:
+        """The HTTP gateway owns all retries and raises on incomplete pages."""
+        resp = self.http.request(
+            "GET", url,
+            timeout=(10, max(1, min(settings.HDDT_LIST_READ_TIMEOUT_SECONDS, 120))),
+            max_attempts=max(1, min(settings.HDDT_LIST_MAX_ATTEMPTS, HoaDonHttpClient.MAX_REQUEST_ATTEMPTS)),
+            request_profile="lookup", response_kind="list",
+        )
+        data = resp.json()
+        self.successful_response_count += 1
+        return data
 
     # ------------------------------------------------------------------
     # INVOICE PROCESSING
@@ -332,6 +285,17 @@ class InvoiceListService:
             f"tdlap=ge={start:%d/%m/%Y}T00:00:00;"
             f"tdlap=le={end:%d/%m/%Y}T23:59:59"
         )
+
+    @staticmethod
+    def _split_sco_periods(start: date, end: date) -> List[Tuple[date, date]]:
+        """Keep each SCO query within GDT's ten-day inclusive limit."""
+        periods = []
+        cursor = start
+        while cursor <= end:
+            period_end = min(cursor + timedelta(days=9), end)
+            periods.append((cursor, period_end))
+            cursor = period_end + timedelta(days=1)
+        return periods
 
     @staticmethod
     def _split_by_month(start: date, end: date) -> List[Tuple[date, date]]:

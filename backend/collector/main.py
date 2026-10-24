@@ -63,6 +63,10 @@ def collect_for_company(
         "tax_code": tax_code,
         "company_name": company.get("company_name", ""),
         "login_success": False,
+        "collection_success": False,
+        "list_complete": False,
+        "failed_ranges": [],
+        "stage": "login",
         "invoices_detected": 0,
         "invoices_downloaded": 0,
         "download_failed": 0,
@@ -77,6 +81,7 @@ def collect_for_company(
     captcha_solver = SvgCaptchaSolver()
     login_service = LoginService(http_client, captcha_solver)
     
+    list_service = None
     try:
         # Login
         token = login_service.login(username, password)
@@ -84,9 +89,11 @@ def collect_for_company(
         logger.info(f"Login successful for {tax_code}")
         
         # Get profile to verify
+        result["stage"] = "profile"
         profile_service = ProfileService(http_client)
         profile = profile_service.fetch_profile()
-        tax_code = profile["tax_code"]
+        if profile["tax_code"] != tax_code:
+            raise RuntimeError("GDT profile tax code does not match the requested company")
         logger.info(f"Tax code: {tax_code}, Company: {profile['company_name']}")
         
         # Update company name
@@ -98,26 +105,38 @@ def collect_for_company(
         list_service = InvoiceListService(http_client, invoice_repo)
         
         # Fetch PURCHASE invoices (hóa đơn đầu vào)
+        result["stage"] = "purchase_list"
         purchase_ids = list_service.fetch_invoice_identifiers(
             tax_code=tax_code,
             from_date=from_date,
             to_date=to_date,
-            is_purchase=True
+            is_purchase=True,
+            allow_partial=True,
         )
         logger.info(f"Found {len(purchase_ids)} purchase invoices for {tax_code}")
         health.inc("total_invoices_seen", len(purchase_ids))
         
         # Fetch SOLD invoices (hóa đơn đầu ra)
+        result["invoices_detected"] = len(purchase_ids)
+        result["stage"] = "sold_list"
         sold_ids = list_service.fetch_invoice_identifiers(
             tax_code=tax_code,
             from_date=from_date,
             to_date=to_date,
-            is_purchase=False
+            is_purchase=False,
+            allow_partial=True,
         )
         result["list_responses"] = list_service.successful_response_count
         logger.info(f"Found {len(sold_ids)} sold invoices for {tax_code}")
         health.inc("total_invoices_seen", len(sold_ids))
         
+        result["failed_ranges"] = list(list_service.failed_ranges)
+        result["list_complete"] = not result["failed_ranges"]
+        for failure in result["failed_ranges"][:5]:
+            result["error_details"].append(
+                f"{failure['api']} [{failure['from_date']} - {failure['to_date']}]: {failure['error']}"
+            )
+        result["stage"] = "detail"
         # Download details
         detail_worker = InvoiceDetailWorker(http_client, invoice_repo, item_repo)
         
@@ -131,6 +150,8 @@ def collect_for_company(
                 health.inc("total_detail_success")
                 if was_downloaded:
                     result["invoices_downloaded"] += 1
+            except GdtAuthenticationBlockedError:
+                raise
             except Exception as e:
                 logger.error(f"Detail failed for {identifier.id}: {e}")
                 health.inc("total_detail_failed")
@@ -139,22 +160,37 @@ def collect_for_company(
                 if len(result["error_details"]) < 5:
                     result["error_details"].append(f"{identifier.id[:20]}...: {str(e)[:50]}")
         
+        errors = []
+        if not result["list_complete"]:
+            errors.append(f"lookup incomplete: {len(result['failed_ranges'])} API/date ranges failed; retry on a later run")
+        if result["download_failed"]:
+            errors.append(f"detail: {result['download_failed']} invoice downloads failed; retry on a later run")
+        if errors:
+            result["error"] = "; ".join(errors)
+            result["stage"] = "partial"
+        else:
+            result["collection_success"] = True
+            result["stage"] = "completed"
         return result
         
     except GdtAuthenticationBlockedError as e:
         logger.error("GDT authentication behavior block for %s", tax_code)
         result["auth_blocked"] = True
-        result["error"] = str(e)
+        result["error"] = f"{result['stage']}: {e}"
         return result
     except Exception as e:
         logger.exception(f"Failed to collect for {tax_code}: {e}")
-        result["error"] = str(e)
+        result["error"] = f"{result['stage']}: {e}"
         
         # Send login failed alert if it's a login error
-        if notifier and "login" in str(e).lower():
+        if notifier and result["stage"] == "login":
             notifier.send_login_failed(tax_code, str(e))
         
         return result
+    finally:
+        if list_service is not None:
+            result["list_responses"] = list_service.successful_response_count
+        http_client.session.close()
 
 
 def retry_failed_invoices(

@@ -14,6 +14,8 @@ class FakeResponse:
         self._payload = payload or {}
         self.headers = {}
         self.text = str(self._payload)
+        self.content = self.text.encode()
+        self.close = MagicMock()
         self.elapsed = MagicMock()
         self.elapsed.total_seconds.return_value = 0.01
         self.request = MagicMock(method="GET", url="https://example.test")

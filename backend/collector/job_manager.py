@@ -154,6 +154,7 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
     manager = JobManager()
     notifier = TelegramNotifier()
     start_time = time.time()
+    http_client = None
     
     try:
         manager.update_job(job_id, status=JobStatus.RUNNING, message="Đang khởi tạo...")
@@ -190,7 +191,8 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
         profile_service = ProfileService(http_client)
         profile = profile_service.fetch_profile()
 
-        tax_code = profile["tax_code"]
+        if profile["tax_code"] != tax_code:
+            raise RuntimeError("GDT profile tax code does not match the requested company")
         
         # Update company name from profile
         if profile.get("company_name"):
@@ -206,7 +208,8 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
             tax_code=tax_code,
             from_date=from_date,
             to_date=to_date,
-            is_purchase=True
+            is_purchase=True,
+            allow_partial=True,
         )
         
         # Sold invoices
@@ -214,7 +217,8 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
             tax_code=tax_code,
             from_date=from_date,
             to_date=to_date,
-            is_purchase=False
+            is_purchase=False,
+            allow_partial=True,
         )
         
         all_identifiers = purchase_ids + sold_ids
@@ -232,12 +236,16 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
         # Download details
         detail_worker = InvoiceDetailWorker(http_client, invoice_repo, item_repo)
         processed = 0
+        failed = 0
         
         for i, identifier in enumerate(all_identifiers, 1):
             try:
                 detail_worker.process(identifier)
                 processed += 1
+            except GdtAuthenticationBlockedError:
+                raise
             except Exception as e:
+                failed += 1
                 logger.warning(f"Job {job_id}: Failed to process {identifier.id}: {e}")
             
             progress = 20 + int((i / total) * 75) if total > 0 else 95
@@ -248,6 +256,14 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
                 invoices_processed=processed
             )
         
+        if list_service.failed_ranges:
+            raise RuntimeError(
+                f"Lookup incomplete: {len(list_service.failed_ranges)} API/date ranges failed; "
+                f"processed {processed}/{total} available invoices. Retry on a later run."
+            )
+        if failed:
+            raise RuntimeError(f"Tải chi tiết thất bại {failed}/{total} hóa đơn; phiên chưa hoàn tất")
+
         manager.update_job(
             job_id,
             status=JobStatus.COMPLETED,
@@ -295,3 +311,6 @@ def run_collector_job(job_id: str, company: dict, from_date: date, to_date: date
             tax_code=company.get('tax_code', 'unknown'),
             error=str(e)
         )
+    finally:
+        if http_client is not None:
+            http_client.session.close()

@@ -3,6 +3,10 @@ import logging
 import threading
 import time
 import uuid
+import random
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from urllib.parse import urlsplit
 from .endpoints import BASE_URL, CAPTCHA_ENDPOINT, AUTH_ENDPOINT, PROFILE_ENDPOINT
 from backend.config import settings
 from backend.observability.logger import get_logger
@@ -19,6 +23,14 @@ class GdtAuthenticationBlockedError(RuntimeError):
         super().__init__(
             f"{message} (request_id={request_id}, profile={self.request_profile})"
         )
+
+
+class GdtRequestError(RuntimeError):
+    """An incomplete GDT request; safe metadata only, never response bodies."""
+
+
+class GdtInvalidResponseError(GdtRequestError):
+    """The gateway returned HTML, empty content, or an invalid API envelope."""
 
 
 class HoaDonHttpClient:
@@ -100,74 +112,120 @@ class HoaDonHttpClient:
         except Exception:
             pass
 
-    def request(self, method: str, url: str, *, request_profile: str | None = None, **kwargs) -> requests.Response:
-        """
-        Generic request wrapper with retry logic for 429 and 5xx.
-        """
-        import time
-        import random
-        
-        max_retries = 5
-        base_backoff = 2
+    MAX_REQUEST_ATTEMPTS = 5
+    MAX_RETRY_WAIT_SECONDS = 60
+
+    @staticmethod
+    def _response_metadata(resp):
+        content_type = resp.headers.get("Content-Type", "unknown").split(";", 1)[0]
+        return f"HTTP {resp.status_code}, content-type={content_type}, bytes={len(resp.content)}"
+
+    def _validate_json_response(self, resp, response_kind):
+        try:
+            data = resp.json()
+        except ValueError:
+            body = resp.text.lstrip().lower()
+            kind = "empty" if not body else "HTML" if body.startswith("<") else "non-JSON"
+            raise GdtInvalidResponseError(
+                f"{kind} response ({self._response_metadata(resp)})"
+            ) from None
+        if not isinstance(data, dict):
+            raise GdtInvalidResponseError("API response is not a JSON object")
+        if response_kind == "list":
+            if not isinstance(data.get("datas"), list):
+                raise GdtInvalidResponseError("Invoice list response missing a valid datas array")
+            if data.get("state") is not None and not isinstance(data["state"], str):
+                raise GdtInvalidResponseError("Invoice list response has an invalid pagination state")
+        if response_kind == "captcha":
+            svg = data.get("svg") or data.get("data") or data.get("content")
+            if not data.get("key") or not isinstance(svg, str) or not svg:
+                raise GdtInvalidResponseError("Captcha response missing key or SVG")
+        if response_kind == "profile":
+            info = data.get("tinInfoTT86")
+            if not ((isinstance(info, dict) and info.get("mst")) or data.get("id") or data.get("username")):
+                raise GdtInvalidResponseError("Profile response missing taxpayer identifier")
+        if response_kind == "detail":
+            if not data.get("id") or not isinstance(data.get("hdhhdvu"), list):
+                raise GdtInvalidResponseError("Invoice detail response missing id or items")
+        return data
+
+    @classmethod
+    def _retry_delay(cls, attempt, response):
+        delay = min(5 * (2 ** (attempt - 1)) + random.uniform(0, 1), cls.MAX_RETRY_WAIT_SECONDS)
+        value = response.headers.get("Retry-After") if response is not None else None
+        if value:
+            try:
+                retry_after = float(value)
+            except (ValueError, TypeError):
+                try:
+                    retry_after = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+                except (ValueError, TypeError, OverflowError):
+                    retry_after = 0
+            if retry_after > cls.MAX_RETRY_WAIT_SECONDS:
+                raise GdtRequestError("GDT requested a longer Retry-After; retry on a later collector run")
+            delay = max(delay, retry_after)
+        return delay
+
+    def request(self, method: str, url: str, *, request_profile: str | None = None,
+                response_kind: str | None = None, max_attempts: int | None = None,
+                **kwargs) -> requests.Response:
+        """The only retry layer: bounded retries for transport, 429/5xx and invalid JSON."""
+        attempts = self.MAX_REQUEST_ATTEMPTS if max_attempts is None else max_attempts
+        if isinstance(attempts, bool) or not isinstance(attempts, int) or not 1 <= attempts <= self.MAX_REQUEST_ATTEMPTS:
+            raise ValueError("max_attempts must be between 1 and MAX_REQUEST_ATTEMPTS")
         request_kwargs = dict(kwargs)
         extra_headers = request_kwargs.pop("headers", {})
         timeout = request_kwargs.pop("timeout", self.timeout)
-        
-        for attempt in range(1, max_retries + 1):
-            try:
-                self._wait_for_request_slot()
-                headers = self._headers_for(request_profile)
-                headers.update(extra_headers)
-                self.last_request_id = headers["Request-Id"]
-                self.last_request_profile = request_profile
-                resp = self.session.request(method, url, timeout=timeout, headers=headers, **request_kwargs)
+        endpoint = urlsplit(url).path
+        context = f"GDT {request_profile or 'request'} {endpoint}"
 
+        for attempt in range(1, attempts + 1):
+            resp = None
+            self._wait_for_request_slot()
+            headers = self._headers_for(request_profile)
+            headers.update(extra_headers)
+            self.last_request_id = headers["Request-Id"]
+            self.last_request_profile = request_profile
+            try:
+                resp = self.session.request(method, url, timeout=timeout, headers=headers, **request_kwargs)
+                self._log_response(resp, context)
                 if resp.status_code == 403 and self._is_behavior_block(resp):
                     raise GdtAuthenticationBlockedError(
                         "GDT blocked the request as invalid behavior",
-                        request_id=headers["Request-Id"],
-                        request_profile=request_profile,
+                        request_id=self.last_request_id, request_profile=request_profile,
                     )
-                
-                if resp.status_code == 429:
-                    wait_time = base_backoff * (2 ** (attempt - 1)) + random.uniform(0.5, 1.5)
-                    logger.warning(
-                        "Rate limited (429) at %s. Attempt %d/%d. Waiting %.2fs...",
-                        url, attempt, max_retries, wait_time
-                    )
-                    time.sleep(wait_time)
-                    continue
-                
-                if resp.status_code >= 500:
-                    wait_time = base_backoff + random.uniform(0, 2)
-                    logger.warning(
-                        "Server error (%d) at %s. Attempt %d/%d. Waiting %.2fs...",
-                        resp.status_code, url, attempt, max_retries, wait_time
-                    )
-                    time.sleep(wait_time)
-                    continue
-                
-                return resp
-                
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                wait_time = base_backoff + random.uniform(0, 2)
-                logger.warning(
-                    "Network error (%s) at %s. Attempt %d/%d. Waiting %.2fs...",
-                    type(e).__name__, url, attempt, max_retries, wait_time
-                )
-                if attempt == max_retries:
-                    raise
-                time.sleep(wait_time)
-        
-        # If we got here, all retries failed (most likely with 429 or 5xx)
-        # Just return the last response and let the caller handle it or raise_for_status
-        return resp
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    reason = self._response_metadata(resp)
+                else:
+                    if resp.status_code >= 400:
+                        raise GdtRequestError(
+                            f"{context}: {self._response_metadata(resp)}; request_id={self.last_request_id}"
+                        )
+                    if response_kind:
+                        self._validate_json_response(resp, response_kind)
+                    return resp
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                reason = type(exc).__name__
+            except GdtInvalidResponseError as exc:
+                reason = str(exc)
+
+            if resp is not None:
+                resp.close()
+            if attempt == attempts:
+                raise GdtRequestError(
+                    f"{context} failed after {attempt} attempts: {reason}; request_id={self.last_request_id}"
+                ) from None
+            delay = self._retry_delay(attempt, resp)
+            logger.warning("%s: %s; attempt %d/%d, retry in %.1fs; request_id=%s",
+                           context, reason, attempt, attempts, delay, self.last_request_id)
+            time.sleep(delay)
 
     @staticmethod
     def _is_behavior_block(resp: requests.Response) -> bool:
         """Identify the GDT 403 response that requires the circuit breaker."""
         try:
-            message = str(resp.json().get("message", ""))
+            data = resp.json()
+            message = str(data.get("message", "")) if isinstance(data, dict) else resp.text
         except Exception:
             message = resp.text
         return "hành vi không hợp lệ" in message.lower()
@@ -179,7 +237,7 @@ class HoaDonHttpClient:
         logger.info("GET captcha: %s", url)
 
         try:
-            resp = self.request("GET", url, request_profile="captcha")
+            resp = self.request("GET", url, request_profile="captcha", response_kind="captcha")
             self._log_response(resp, "GET captcha")
             resp.raise_for_status()
 
@@ -238,30 +296,14 @@ class HoaDonHttpClient:
                 url,
                 json=payload,
                 request_profile="login",
+                response_kind="auth",
             )
             
             self._log_response(resp, "POST authenticate")
 
-            # Do NOT raise immediately – API returns 200 even for some failures
-            try:
-                data = resp.json()
-            except Exception:
-                logger.error("Auth non-JSON response: %s", resp.text)
-                raise RuntimeError(
-                    f"Auth failed: non-JSON response ({resp.status_code})"
-                )
-
-            if resp.status_code != 200:
-                logger.error("Auth HTTP error: %s", resp.status_code)
-                raise RuntimeError(
-                    f"Auth HTTP error {resp.status_code}"
-                )
-
-            if "token" not in data:
-                logger.error("Auth response missing token")
-                raise RuntimeError(
-                    "Auth failed: token missing"
-                )
+            data = resp.json()
+            if not isinstance(data.get("token"), str) or not data["token"]:
+                raise GdtRequestError("GDT login: token missing; check credentials or captcha")
 
             return data
         except Exception as e:
@@ -289,21 +331,8 @@ class HoaDonHttpClient:
         logger.info("GET profile: %s", url)
 
         try:
-            resp = self.request("GET", url, request_profile="lookup")
-            self._log_response(resp, "GET profile")
-
-            if resp.status_code != 200:
-                logger.error("Profile fetch error: %s (Status: %d)", resp.text, resp.status_code)
-                raise RuntimeError(
-                    f"Profile HTTP error {resp.status_code}: {resp.text}"
-                )
-
-            try:
-                data = resp.json()
-            except Exception:
-                logger.error("Profile non-JSON response")
-                raise RuntimeError(f"Profile response is not valid JSON: {resp.text[:500]}")
-
+            resp = self.request("GET", url, request_profile="lookup", response_kind="profile")
+            data = resp.json()
             return data
         except Exception as e:
             logger.error("Failed to fetch profile: %s", e)

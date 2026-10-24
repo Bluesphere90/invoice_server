@@ -26,6 +26,8 @@ class Settings:
     # Collector
     COLLECTOR_INTERVAL_HOURS: int = int(os.getenv("COLLECTOR_INTERVAL_HOURS", "6"))
     HDDT_REQUEST_DELAY_MS: int = int(os.getenv("HDDT_REQUEST_DELAY_MS", "600"))
+    HDDT_LIST_READ_TIMEOUT_SECONDS: int = int(os.getenv("HDDT_LIST_READ_TIMEOUT_SECONDS", "60"))
+    HDDT_LIST_MAX_ATTEMPTS: int = int(os.getenv("HDDT_LIST_MAX_ATTEMPTS", "3"))
     HDDT_BROWSER_USER_AGENT: str = os.getenv(
         "HDDT_BROWSER_USER_AGENT",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
