@@ -18,7 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, patch
-from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 ROOT = Path(__file__).parent
 
@@ -61,7 +61,8 @@ BASE = dict(
     logging=logging, random=random, threading=threading, time=time, uuid=uuid,
     date=date, datetime=datetime, timedelta=timedelta, timezone=timezone,
     parsedate_to_datetime=parsedate_to_datetime, settings=SETTINGS,
-    urlsplit=urlsplit, urlencode=urlencode, urlparse=urlparse, parse_qs=parse_qs,
+    urlsplit=urlsplit, urlunsplit=urlunsplit, urlencode=urlencode, urlparse=urlparse,
+    parse_qs=parse_qs, parse_qsl=parse_qsl,
     List=List, Dict=Dict, Any=Any, Optional=Optional, Tuple=Tuple, monthrange=monthrange,
     logger=MagicMock(), requests=REQUESTS,
     BASE_URL="https://example.test/api", CAPTCHA_ENDPOINT="/captcha",
@@ -97,6 +98,7 @@ def gateway(sco_purchase_fails=True):
     client = HttpClient()
     client._wait_for_request_slot = MagicMock()
     client._log_response = MagicMock()
+    client._sco_lookup_captcha = MagicMock(return_value={"ckey": "test-key", "cvalue": "test-value"})
 
     def request(method, url, **kwargs):
         endpoint = urlsplit(url).path

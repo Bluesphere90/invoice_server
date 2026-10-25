@@ -34,6 +34,7 @@ class ScoDateWindowTests(unittest.TestCase):
         self.addCleanup(self.http.session.close)
         self.http._wait_for_request_slot = MagicMock()
         self.http._log_response = MagicMock()
+        self.http._sco_lookup_captcha = MagicMock(return_value={"ckey": "test-key", "cvalue": "test-value"})
         self.http.session.request = MagicMock(side_effect=self.handle_request)
         self.repo = MagicMock()
         self.repo.invoice_header_exists.return_value = False

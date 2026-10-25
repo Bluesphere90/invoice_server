@@ -6,7 +6,8 @@ import uuid
 import random
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from backend.collector.captcha import SvgCaptchaSolver
 from .endpoints import BASE_URL, CAPTCHA_ENDPOINT, AUTH_ENDPOINT, PROFILE_ENDPOINT
 from backend.config import settings
 from backend.observability.logger import get_logger
@@ -81,11 +82,11 @@ class HoaDonHttpClient:
         })
 
     @classmethod
-    def _wait_for_request_slot(cls):
+    def _wait_for_request_slot(cls, min_delay_seconds: float = 0):
         """Apply one process-wide delay across all GDT requests."""
         with cls._request_gate_lock:
             now = time.monotonic()
-            delay_seconds = settings.HDDT_REQUEST_DELAY_MS / 1000
+            delay_seconds = max(settings.HDDT_REQUEST_DELAY_MS / 1000, min_delay_seconds)
             remaining = delay_seconds - (now - cls._last_request_at)
             if remaining > 0:
                 time.sleep(remaining)
@@ -101,7 +102,7 @@ class HoaDonHttpClient:
         try:
             logger.info(
                 "%s: %s %s completed in %.2fs. Status: %d", 
-                context, resp.request.method, resp.url, resp.elapsed.total_seconds(), resp.status_code
+                context, resp.request.method, self._safe_log_url(resp.url), resp.elapsed.total_seconds(), resp.status_code
             )
             
             if resp.status_code >= 400:
@@ -114,6 +115,25 @@ class HoaDonHttpClient:
 
     MAX_REQUEST_ATTEMPTS = 5
     MAX_RETRY_WAIT_SECONDS = 60
+
+    @staticmethod
+    def _safe_log_url(url):
+        parsed = urlsplit(url)
+        query = [(key, "[redacted]" if key.lower() in {"ckey", "cvalue"} else value)
+                 for key, value in parse_qsl(parsed.query, keep_blank_values=True)]
+        return urlunsplit(parsed._replace(query=urlencode(query)))
+
+    def _sco_lookup_captcha(self):
+        # A challenge is single-use: obtain another one for every page/attempt.
+        # Fetch once here so the outer request owns the overall retry budget.
+        try:
+            captcha = self.get_captcha(max_attempts=1)
+        except GdtRequestError as exc:
+            raise GdtInvalidResponseError(f"SCO lookup captcha unavailable: {exc}") from None
+        value = SvgCaptchaSolver().solve(captcha["svg"])
+        if not value:
+            raise GdtInvalidResponseError("SCO lookup captcha could not be solved")
+        return {"ckey": captcha["key"], "cvalue": value}
 
     @staticmethod
     def _response_metadata(resp):
@@ -178,16 +198,37 @@ class HoaDonHttpClient:
         timeout = request_kwargs.pop("timeout", self.timeout)
         endpoint = urlsplit(url).path
         context = f"GDT {request_profile or 'request'} {endpoint}"
+        base = urlsplit(BASE_URL)
+        sco_lookup = (method.upper() == "GET" and urlsplit(url).netloc == base.netloc
+                      and endpoint in {base.path + "/sco-query/invoices/purchase",
+                                       base.path + "/sco-query/invoices/sold"})
+        if sco_lookup:
+            parsed = urlsplit(url)
+            query = parse_qsl(parsed.query, keep_blank_values=True)
+            if any(key.lower() in {"ckey", "cvalue"} for key, _ in query):
+                url = urlunsplit(parsed._replace(query=urlencode(
+                    [(key, value) for key, value in query
+                     if key.lower() not in {"ckey", "cvalue"}])))
 
         for attempt in range(1, attempts + 1):
             resp = None
-            self._wait_for_request_slot()
             headers = self._headers_for(request_profile)
             headers.update(extra_headers)
             self.last_request_id = headers["Request-Id"]
             self.last_request_profile = request_profile
             try:
-                resp = self.session.request(method, url, timeout=timeout, headers=headers, **request_kwargs)
+                attempt_kwargs = dict(request_kwargs)
+                if sco_lookup:
+                    challenge = self._sco_lookup_captcha()
+                    headers.update(challenge)
+                    headers["End-Point"] = "/tra-cuu/tra-cuu-hoa-don"
+                    attempt_kwargs["params"] = dict(request_kwargs.get("params") or {})
+                    attempt_kwargs["params"].update(challenge)
+                self._wait_for_request_slot(3 if sco_lookup else 0)
+                # A nested captcha request changes these fields; restore the lookup ID.
+                self.last_request_id = headers["Request-Id"]
+                self.last_request_profile = request_profile
+                resp = self.session.request(method, url, timeout=timeout, headers=headers, **attempt_kwargs)
                 self._log_response(resp, context)
                 if resp.status_code == 403 and self._is_behavior_block(resp):
                     raise GdtAuthenticationBlockedError(
@@ -197,6 +238,14 @@ class HoaDonHttpClient:
                 if resp.status_code == 429 or resp.status_code >= 500:
                     reason = self._response_metadata(resp)
                 else:
+                    if sco_lookup and resp.status_code == 400:
+                        try:
+                            payload = resp.json()
+                            message = str(payload.get("message", "")) if isinstance(payload, dict) else ""
+                        except ValueError:
+                            message = ""
+                        if "captcha" in message.lower():
+                            raise GdtInvalidResponseError("SCO lookup captcha rejected")
                     if resp.status_code >= 400:
                         raise GdtRequestError(
                             f"{context}: {self._response_metadata(resp)}; request_id={self.last_request_id}"
@@ -232,12 +281,13 @@ class HoaDonHttpClient:
 
     # ---------- CAPTCHA ----------
 
-    def get_captcha(self) -> dict:
+    def get_captcha(self, *, max_attempts: int | None = None) -> dict:
         url = BASE_URL + CAPTCHA_ENDPOINT
         logger.info("GET captcha: %s", url)
 
         try:
-            resp = self.request("GET", url, request_profile="captcha", response_kind="captcha")
+            resp = self.request("GET", url, request_profile="captcha", response_kind="captcha",
+                                max_attempts=max_attempts)
             self._log_response(resp, "GET captcha")
             resp.raise_for_status()
 
